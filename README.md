@@ -10,7 +10,7 @@ learning-app phases are yours to build on top of the reusable landmark layer.
 ## Structure
 
 ```
-asl-cv/
+SignLanguageLearning/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
