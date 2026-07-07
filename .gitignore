@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+venv/
+
+# Model weights (large; auto-downloaded into models/ by local_model())
+models/
+
+# Other
+project_workflow.md
