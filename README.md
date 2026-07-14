@@ -1,127 +1,124 @@
-# ASL-CV
+# ASL Adaptive Tutor
 
-A from-scratch American Sign Language learning tool built on computer vision.
-Camera → MediaPipe **HolisticLandmarker** (pose + hands + face) → landmark
-sequences → a temporal model that recognizes signs → a practice/feedback loop.
+A from-scratch American Sign Language learning tool built on computer vision — an
+adaptive tutor that watches you sign, diagnoses exactly where your form is off, and
+generates personalized practice to close your gaps, live.
 
-This scaffold gets Phases 0–2 running (see the roadmap). The modeling and
-learning-app phases are yours to build on top of the reusable landmark layer.
+For the full phase-by-phase build plan, see **[`project_workflow.md`](project_workflow.md)**.
+This README is the overview and quickstart.
+
+## The one principle
+
+**Grounded answer key, dynamic everything else.** The system has exactly one fixed,
+sourced asset — a library of *correct sign references* from Deaf-created data. Every
+other thing the learner experiences (diagnosis, sequencing, practice, feedback,
+difficulty) is generated live and personalized. Like a real instructor: fully dynamic
+in *how* they teach, fixed only on *what a correct sign is*. Grounding the answer key
+is what makes the live feedback trustworthy rather than a confident hallucination.
+
+## How it works
+
+A closed loop over two grounded inputs — the reference library and your live attempt:
+
+    assess attempt → diagnose parameters → update learner model
+        → re-plan next task → generate task → present + coach → repeat
+
+- **Perception** — a swappable `PoseExtractor` turns each frame into whole-body
+  keypoints (body + hands + face).
+- **Grading** — compares your attempt to the target's reference by distance and by
+  *phonological parameters* (handshape, location, movement, orientation), so a
+  malformed attempt yields a specific diagnosis instead of a wrong label.
+- **Learner model + adaptive engine** — track per-sign and per-parameter mastery and
+  choose what to drill next.
+- **Task generator + feedback** — produce fresh drills and contrastive pairs, and
+  coach you against the real Deaf-signer reference clip.
+
+## Status
+
+**Built:** the perception layer — `src/aslcv/pose/` — a swappable `PoseExtractor`
+interface with two working backends (DWPose via rtmlib as default, MediaPipe Holistic
+as alternate) over a shared `Pose` / `Skeleton` abstraction. Model weights are in
+`models/`.
+
+**Next (Phase 2):** the normalized feature layer, a cached-sequence dataset loader,
+and a distance-based grader — the thin end-to-end slice. See the plan.
 
 ## Structure
 
-```
-SignLanguageLearning/
-├── README.md
-├── requirements.txt
-├── .gitignore
-├── config.yaml                 # paths, feature toggles, which extractor to use
-├── configs/                    # per-model hyperparameters (lstm.yaml, ...)   [7]
-│
-├── models/                     # DWPose .onnx weights — gitignored
-│   └── checkpoints/            # your trained sign models — gitignored        [5]
-│
-├── data/
-│   ├── raw/                    # your recorded videos (optional) — gitignored
-│   ├── landmarks/              # extracted sequences, one folder per sign — gitignored
-│   └── external/               # WLASL / MSASL downloads — gitignored         [8]
-│
-├── notebooks/
-│   ├── 00_explore_landmarks.ipynb
-│   └── colab_train.ipynb       # training on Colab's bigger GPU               [5,8]
-│
-├── scripts/
-│   ├── record_signs.py         # collect your own clips, live                 [4]
-│   ├── extract_landmarks.py    # batch: videos → landmark sequences           [8]
-│   └── prepare_wlasl.py        # download + organize the public datasets      [8]
-│
-├── src/aslcv/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── pose/                   # the swappable extractor layer
-│   │   ├── base.py             #   PoseExtractor interface
-│   │   ├── dwpose.py           #   rtmlib/DWPose implementation (default)     [2]
-│   │   └── mediapipe.py        #   alternate implementation
-│   ├── features.py             # keypoints → normalized feature vector        [3]
-│   ├── dataset.py              # load sequences, pad/crop, train/val split    [5]
-│   ├── nets/
-│   │   ├── lstm.py                                                            [5]
-│   │   ├── transformer.py                                                     [7]
-│   │   └── stgcn.py                                                           [7]
-│   ├── train.py                # training loop                                [5]
-│   ├── evaluate.py             # accuracy, confusion matrix, hand-dropout     [5]
-│   ├── capture.py              # live skeleton visualizer                     [2]
-│   └── recognize.py            # real-time sliding-window inference           [6]
-│
-├── app/                        # the learning tool                           [9]
-│   ├── srs.py                  #   spaced-repetition scheduling
-│   ├── session.py              #   prompt a sign, capture, score, record
-│   └── progress.json           #   your review history — gitignored
-│
-└── tests/
-    └── test_features.py        # check normalization is signer/scale invariant
-```
+Current:
 
-The important design choice: **`landmarks.py` is the reusable core.** Every
-other piece (visualizer, data collector, and later your trainer and real-time
-recognizer) depends on it, so the feature representation is defined in exactly
-one place.
+    SignLanguageLearning/
+    ├── models/                 # pose model weights (rtmlib .onnx + MediaPipe .task)
+    ├── notebooks/
+    │   ├── PoseExtraction1.py      # live DWPose (rtmlib) demo
+    │   ├── PoseExtraction2.py      # live MediaPipe holistic demo
+    │   └── extractorBenchmarking.py
+    ├── src/aslcv/
+    │   └── pose/                # DONE — the swappable extractor layer
+    │       ├── base.py             #   PoseExtractor / Pose / Skeleton interface
+    │       ├── coco_wholebody.py   #   COCO-WholeBody topology
+    │       ├── dwpose.py           #   DWPose (rtmlib) — default
+    │       └── mediapipe.py        #   MediaPipe holistic — alternate
+    ├── data/raw/
+    ├── project_workflow.md     # the detailed build plan
+    └── pyproject.toml / uv.lock / .python-version
+
+Target modules added per the plan: `features.py`, `dataset.py`, `grading/`,
+`production/`, `learner/`, `generator/`, and `app/`.
+
+**Design core:** `src/aslcv/pose/` is the reusable perception foundation — everything
+downstream consumes `Pose` objects, so the extractor stays swappable and the feature
+representation is defined in one place.
 
 ## Setup
 
-MediaPipe supports **Python 3.9–3.12 only** (not 3.13+). Create the venv on 3.12:
+Requires **Python 3.12** (rtmlib/MediaPipe don't ship wheels for 3.13+). The repo uses
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
-# with uv (recommended)
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-
-# or with stock tools, if `python3.12` is installed
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync          # creates the .venv from pyproject.toml + uv.lock and installs deps
 ```
 
-Download the holistic model bundle and drop it at `models/holistic_landmarker.task`.
-Grab the current link from the official task page (URLs change, so don't guess):
-https://ai.google.dev/edge/mediapipe/solutions/vision/holistic_landmarker
+Model weights live in `models/`:
+- **DWPose / RTMW / YOLOX** (`.onnx`) auto-download via rtmlib the first time an
+  extractor runs, and are cached in `models/`.
+- **MediaPipe** landmarkers (`.task`) are downloaded from the official task pages
+  (pose, face, hand landmarker) and placed in `models/`.
 
 ## Run
 
-```bash
-# Phase 0 — watch your own landmarks (confirms the pipeline works)
-PYTHONPATH=src python -m aslcv.capture
+The live extractor demos work today:
 
-# Phase 2 — record 20 clips of a sign as landmark sequences
-python scripts/record_signs.py --label hello --clips 20 --frames 40
+```bash
+# DWPose (default) — webcam → whole-body skeleton overlay
+python notebooks/PoseExtraction1.py
+
+# MediaPipe holistic — webcam → pose + face mesh + hands
+python notebooks/PoseExtraction2.py
 ```
 
-Each recorded clip is saved as `data/landmarks/<label>/NNNN.npy` with shape
-`(frames, feature_dim)`. With `face_mode: blendshapes`, `feature_dim` is 279
-(99 pose + 63 + 63 hands + 2 presence flags + 52 blendshapes).
+Both open your webcam and draw the detected skeleton; press `q` or `Esc` to quit.
+Module entry points for the feature layer, grader, and app arrive with Phase 2 onward.
 
-## Roadmap
+## Non-negotiable constraints
 
-- **Phase 0 — instrument.** `capture.py`. See the data, sanity-check detection. ✅ scaffolded
-- **Phase 1 — static baseline.** Fingerspelling A–Z from single-frame hand
-  landmarks with a simple classifier. Reuses `vectorize()` per frame.
-- **Phase 2 — collect dynamic signs.** `record_signs.py`. Build a small
-  vocabulary (start with ~10–20 signs). ✅ scaffolded
-- **Phase 3 — sequence model.** Add `src/aslcv/dataset.py` (a torch `Dataset`
-  that loads the `.npy` sequences, pads/crops to a fixed length) and
-  `src/aslcv/nets/` (start with an LSTM, then a small Transformer). Add
-  `train.py`. This is the real ML learning curve.
-- **Phase 4 — real-time recognition.** A sliding window over live frames from
-  `capture.py`, feeding the trained model.
-- **Phase 5 — learning app + public data.** Spaced-repetition practice loop;
-  bring in WLASL / MSASL for a larger vocabulary.
+These follow from the one principle and hold throughout the build:
 
-## Notes / gotchas
+- **Grade by distance to a reference, not by classifying** — a learner's attempt is
+  often not any valid sign, and a classifier would confidently mislabel it.
+- **Retrieve reference video, never generate it** — the learner always imitates real
+  Deaf-signer clips.
+- **Grammar is a rule engine, not a trained model** — ASL's reorder/drop/non-manual
+  rules are enumerable; encode them.
+- **An LLM only ever touches English** (sentence prompts, feedback wording); it never
+  authors or judges ASL.
+- **Data comes from consented, Deaf-created sources** — ASL Citizen (isolated signs)
+  and ASL-LEX (phonological features), not scraped datasets.
+- **Deaf review gates any correction** shown to a user as authoritative.
 
-- MediaPipe's Tasks result nesting has shifted between versions. If you hit
-  shape errors, print `result.pose_landmarks` once and adjust `_points()` /
-  `_blendshapes()` in `landmarks.py` to match your install.
-- Normalization is shoulder-anchored (origin = shoulder midpoint, scale =
-  shoulder width), which is what makes sign *location* comparable across
-  people and camera distances. If you sign partly off-frame, pose detection
-  degrades — keep your upper body in view.
+## Scope
+
+In scope: isolated-sign recognition, parameter-level feedback, adaptive practice
+(v1); sentence prompts with rule-composed targets and continuous recognition (v2).
+Out of scope by design: classifiers/spatial agreement/productive use of space,
+free-form translation, and any synthesized sign video.
