@@ -18,6 +18,8 @@ class Pose:
 
     keypoints: np.ndarray
     scores: np.ndarray
+    width: int | None = None
+    height: int | None = None
 
     def confident(self, threshold: float = 0.5) -> np.ndarray:
         """Boolean mask of keypoints at or above the confidence threshold."""
