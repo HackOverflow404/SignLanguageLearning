@@ -45,6 +45,7 @@ while cap.isOpened():
     success, frame = cap.read()
     if not success:
         break
+    frame = cv2.flip(frame, 1)
     frame_idx += 1
     if frame_idx % PROCESS_EVERY_N_FRAMES != 0:
         continue
