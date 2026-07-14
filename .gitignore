@@ -12,3 +12,6 @@ venv/
 
 # Model weights (large; auto-downloaded into models/ by local_model())
 models/
+
+# Data (large; auto-downloaded into data/ by local_data())
+data/
