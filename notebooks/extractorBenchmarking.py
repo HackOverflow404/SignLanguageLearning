@@ -2,9 +2,6 @@
 # - MediaPipe Holistic
 # - DWPose
 # - RTMW
-# - RTMPose-WholeBody
-# - Sapiens
-# - AlphaPose
-# - OpenPose
+# - ViTPose
 
 # %% Cell 1: Imports
