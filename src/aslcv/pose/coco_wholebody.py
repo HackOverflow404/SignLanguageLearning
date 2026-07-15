@@ -128,6 +128,13 @@ FACE_REGIONS = {
     "inner_mouth": _face(60, 68),
 }
 
+# --- named anchors (resolved from names, so indices can't be mistyped) ------
+# Semantic keypoints downstream normalization needs by meaning. Looked up by
+# name so the block offsets above are handled for free.
+
+_ANCHOR_NAMES = ("nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip")
+_ANCHORS = tuple((name, _idx[name]) for name in _ANCHOR_NAMES)
+
 # --- the public artifact ----------------------------------------------------
 
-COCO_WHOLEBODY = Skeleton(names=_NAMES, edges=_EDGES)
+COCO_WHOLEBODY = Skeleton(names=_NAMES, edges=_EDGES, anchors=_ANCHORS)

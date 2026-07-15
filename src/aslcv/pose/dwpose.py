@@ -66,8 +66,9 @@ class DWPoseExtractor(PoseExtractor):
             return None
 
         #  squeeze to (133, 2) / (133,)
+        height, width = frame.shape[:2]
         best = int(np.argmax(scores.mean(axis=1)))
-        self._last_pose = Pose(keypoints[best], scores[best])
+        self._last_pose = Pose(keypoints[best], scores[best], width=width, height=height)
         return self._last_pose
 
     def draw(self, frame, pose):

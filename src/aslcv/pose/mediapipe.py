@@ -27,6 +27,19 @@ _RIGHT_HAND_OFFSET = _LEFT_HAND_OFFSET + HAND_LM_COUNT
 _TOTAL_KEYPOINTS = _RIGHT_HAND_OFFSET + HAND_LM_COUNT
 
 
+# Semantic anchors as MediaPipe pose-landmark indices (BlazePose ordering).
+# Mapped to combined-array indices via _POSE_OFFSET so they stay correct if the
+# layout is ever reordered. Names match the COCO-WholeBody anchors so downstream
+# normalization is identical across backends.
+_POSE_ANCHOR_LANDMARKS = {
+    "nose": 0,
+    "left_shoulder": 11,
+    "right_shoulder": 12,
+    "left_hip": 23,
+    "right_hip": 24,
+}
+
+
 def _build_skeleton() -> Skeleton:
     names = (
         [f"pose_{i}" for i in range(POSE_LM_COUNT)]
@@ -45,7 +58,11 @@ def _build_skeleton() -> Skeleton:
         + offset_edges(vision.HandLandmarksConnections.HAND_CONNECTIONS, _RIGHT_HAND_OFFSET)
     )
 
-    return Skeleton(names=tuple(names), edges=tuple(edges))
+    anchors = tuple(
+        (name, _POSE_OFFSET + landmark) for name, landmark in _POSE_ANCHOR_LANDMARKS.items()
+    )
+
+    return Skeleton(names=tuple(names), edges=tuple(edges), anchors=anchors)
 
 
 MEDIAPIPE_HOLISTIC = _build_skeleton()
