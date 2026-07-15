@@ -1,0 +1,819 @@
+# ==========================================================================
+# curriculum.yaml  --  Phase 0 output (curriculum scope)
+#
+# The vocabulary that defines the label set, and therefore which references to
+# ingest (Phase 1) and everything downstream. This is a scope document, not the
+# grounded answer key itself -- the answer key is the reference video + pose
+# sequences in data/ (Phase 1). Here I only decide WHAT to teach and in what order.
+#
+# Phonological fields (handshape / *_location / movement / sign_type) are copied
+# verbatim from ASL-LEX 2.0 (data/ASL_LEX) and describe the FIRST morpheme of each
+# sign. They are the target parameters the grader diagnoses and the axes the
+# contrastive drills contrast on.
+# ==========================================================================
+
+version: 0.1
+count: 60
+
+principle: >
+  Grounded answer key, dynamic everything else. This file fixes only the sign
+  list, ordering, and v2 constructions; diagnosis, sequencing, and practice are
+  generated live against real Deaf-signer references.
+
+sources:
+  vocabulary_and_recognizability: "ASL-LEX 2.0 (SignFrequency, PercentUnknown, phonology)"
+  reference_video: "ASL Citizen (Phase 1) -- consented, Deaf-involved, domain-matched"
+
+selection_criteria:
+  - "Beginner usefulness: high subjective SignFrequency, low PercentUnknown (<= 0.10)."
+  - "Phonological diversity: cover all 5 major locations and a broad handshape set,"
+  - "so contrastive minimal-pair drills have material to work with."
+
+status:
+  asl_citizen_confirmed: false   # TODO: confirm every gloss against ASL Citizen's
+                                 # gloss list once the download finishes and is
+                                 # extracted, and map asllex_id -> ASL Citizen gloss.
+                                 # (ASL Citizen's 2,731 signs are drawn from ASL-LEX,
+                                 # so overlap is expected, but confirm before Phase 1.)
+
+# Coverage of the chosen 60 across ASL-LEX's phonological parameter space.
+coverage:
+  major_location: {Neutral: 24, Head: 18, Body: 11, Hand: 6, Arm: 1}
+  distinct_handshapes: 20
+  movement: {Straight: 32, Curved: 12, None: 12, Circular: 3, Other: 1}
+
+# The parameter vocabularies the grader's phonological heads predict (from ASL-LEX).
+parameter_space:
+  major_location: [Neutral, Head, Body, Hand, Arm]
+  movement: [Straight, Curved, Circular, None, BackAndForth, Z-shaped, X-shaped, Other]
+  handshapes_in_curriculum:
+    ["1", "5", open_b, closed_b, flat_h, flatspread_5, s, a, c, o, l, y, h, v,
+     w, g, d, f, curved_1, bent_1]
+
+# Teaching order: units are taught top to bottom; signs within a unit top to bottom.
+units:
+  - id: 1
+    name: "Pronouns & pointing"
+    rationale: >
+      Deixis first: every later sentence needs a subject/object. All share the
+      '1' handshape, so early practice isolates location and movement, not
+      handshape.
+    signs:
+      - gloss: you
+        asllex_id: you
+        translation: you
+        lexical_class: Minor
+        handshape: "1"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: me
+        asllex_id: me
+        translation: me
+        lexical_class: Minor
+        handshape: "1"
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: he
+        asllex_id: he
+        translation: he
+        lexical_class: Minor
+        handshape: "1"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: we
+        asllex_id: we
+        translation: we
+        lexical_class: Minor
+        handshape: "1"
+        major_location: Body
+        minor_location: Clavicle
+        movement: Curved
+        repeated: false
+        sign_type: OneHanded
+      - gloss: my
+        asllex_id: my
+        translation: my
+        lexical_class: Minor
+        handshape: open_b
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: your
+        asllex_id: your
+        translation: your
+        lexical_class: Minor
+        handshape: "5"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+
+  - id: 2
+    name: Question words
+    rationale: >
+      Enables interaction immediately and seeds the v2 wh-question
+      construction. Handshape-diverse (5, l, 1, y, c) at Head/Neutral.
+    signs:
+      - gloss: what_1
+        asllex_id: what_1
+        translation: what_1
+        lexical_class: Minor
+        handshape: "5"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: true
+        sign_type: SymmetricalOrAlternating
+      - gloss: who
+        asllex_id: who
+        translation: who
+        lexical_class: Minor
+        handshape: l
+        major_location: Head
+        minor_location: Chin
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: where
+        asllex_id: where
+        translation: where
+        lexical_class: Minor
+        handshape: "1"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: why
+        asllex_id: why
+        translation: why
+        lexical_class: Minor
+        handshape: y
+        major_location: Head
+        minor_location: Forehead
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: how
+        asllex_id: how
+        translation: how
+        lexical_class: Minor
+        handshape: c
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Curved
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+
+  - id: 3
+    name: "Greetings & courtesy"
+    rationale: >
+      High-frequency social signs for a first real exchange; spread across
+      Head, Body, and Hand locations.
+    signs:
+      - gloss: hello
+        asllex_id: hello
+        translation: hello
+        lexical_class: Minor
+        handshape: closed_b
+        major_location: Head
+        minor_location: Forehead
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: thank_you
+        asllex_id: thank_you
+        translation: thank_you
+        lexical_class: Verb
+        handshape: open_b
+        major_location: Head
+        minor_location: Mouth
+        movement: Curved
+        repeated: false
+        sign_type: OneHanded
+      - gloss: please
+        asllex_id: please
+        translation: please
+        lexical_class: Adverb
+        handshape: open_b
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Circular
+        repeated: true
+        sign_type: OneHanded
+      - gloss: sorry
+        asllex_id: sorry
+        translation: sorry
+        lexical_class: Adjective
+        handshape: a
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Circular
+        repeated: true
+        sign_type: OneHanded
+      - gloss: fine_1
+        asllex_id: fine_1
+        translation: fine_1
+        lexical_class: Adjective
+        handshape: "5"
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: name
+        asllex_id: name
+        translation: name
+        lexical_class: Noun
+        handshape: h
+        major_location: Hand
+        minor_location: FingerRadial
+        movement: Straight
+        repeated: true
+        sign_type: DominanceViolation
+
+  - id: 4
+    name: "Yes / no & wants"
+    rationale: >
+      Minimal responses that make the tutor's drills conversational; seeds the
+      yes/no-question and negation constructions.
+    signs:
+      - gloss: "yes"
+        asllex_id: "yes"
+        translation: "yes"
+        lexical_class: Minor
+        handshape: s
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: "no"
+        asllex_id: "no"
+        translation: "no"
+        lexical_class: Minor
+        handshape: flat_h
+        major_location: Neutral
+        minor_location: Neutral
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: ok
+        asllex_id: ok
+        translation: ok
+        lexical_class: Minor
+        handshape: o
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: want_2
+        asllex_id: want_2
+        translation: want_2
+        lexical_class: Verb
+        handshape: "5"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+
+  - id: 5
+    name: "Family & people"
+    rationale: >
+      Classic beginner semantic set; strong minor-location contrasts at the
+      head (mother=chin vs father=forehead) for precise location diagnosis.
+    signs:
+      - gloss: mother
+        asllex_id: mother
+        translation: mother
+        lexical_class: Noun
+        handshape: "5"
+        major_location: Head
+        minor_location: Chin
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: father
+        asllex_id: father
+        translation: father
+        lexical_class: Noun
+        handshape: "5"
+        major_location: Head
+        minor_location: Forehead
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: sister
+        asllex_id: sister
+        translation: sister
+        lexical_class: Noun
+        handshape: l
+        major_location: Head
+        minor_location: CheekNose
+        movement: None
+        repeated: false
+        sign_type: OneHanded
+      - gloss: brother
+        asllex_id: brother
+        translation: brother
+        lexical_class: Noun
+        handshape: a
+        major_location: Head
+        minor_location: Forehead
+        movement: None
+        repeated: false
+        sign_type: OneHanded
+      - gloss: family
+        asllex_id: family
+        translation: family
+        lexical_class: Noun
+        handshape: f
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Curved
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+      - gloss: baby
+        asllex_id: baby
+        translation: baby
+        lexical_class: Noun
+        handshape: open_b
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: true
+        sign_type: SymmetricalOrAlternating
+      - gloss: friend
+        asllex_id: friend
+        translation: friend
+        lexical_class: Noun
+        handshape: curved_1
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Other
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+
+  - id: 6
+    name: Everyday verbs
+    rationale: >
+      Core predicates to build simple clauses; introduces two-handed
+      asymmetric signs (work, learn, read) after one-handed signs are stable.
+    signs:
+      - gloss: eat_1
+        asllex_id: eat_1
+        translation: eat_1
+        lexical_class: Verb
+        handshape: o
+        major_location: Head
+        minor_location: Mouth
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: drink
+        asllex_id: drink
+        translation: drink
+        lexical_class: Noun
+        handshape: c
+        major_location: Head
+        minor_location: HeadAway
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: sleep
+        asllex_id: sleep
+        translation: sleep
+        lexical_class: Verb
+        handshape: "5"
+        major_location: Head
+        minor_location: HeadAway
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: work
+        asllex_id: work
+        translation: work
+        lexical_class: Verb
+        handshape: s
+        major_location: Hand
+        minor_location: PalmBack
+        movement: Straight
+        repeated: true
+        sign_type: AsymmetricalSameHandshape
+      - gloss: go
+        asllex_id: go
+        translation: go
+        lexical_class: Verb
+        handshape: "1"
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Curved
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+      - gloss: come
+        asllex_id: come
+        translation: come
+        lexical_class: Verb
+        handshape: open_b
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Curved
+        repeated: false
+        sign_type: OneHanded
+      - gloss: learn
+        asllex_id: learn
+        translation: learn
+        lexical_class: Verb
+        handshape: flatspread_5
+        major_location: Hand
+        minor_location: Palm
+        movement: None
+        repeated: false
+        sign_type: AsymmetricalDifferentHandshape
+      - gloss: read
+        asllex_id: read
+        translation: read
+        lexical_class: Verb
+        handshape: v
+        major_location: Hand
+        minor_location: HandAway
+        movement: Straight
+        repeated: true
+        sign_type: AsymmetricalDifferentHandshape
+
+  - id: 7
+    name: "Food & drink"
+    rationale: >
+      Concrete, high-iconicity nouns; pairs naturally with want/eat/drink for
+      early sentences.
+    signs:
+      - gloss: water
+        asllex_id: water
+        translation: water
+        lexical_class: Noun
+        handshape: w
+        major_location: Head
+        minor_location: Chin
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+      - gloss: milk
+        asllex_id: milk
+        translation: milk
+        lexical_class: Noun
+        handshape: s
+        major_location: Neutral
+        minor_location: Neutral
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: coffee
+        asllex_id: coffee
+        translation: coffee
+        lexical_class: Noun
+        handshape: s
+        major_location: Hand
+        minor_location: FingerRadial
+        movement: Circular
+        repeated: true
+        sign_type: AsymmetricalSameHandshape
+
+  - id: 8
+    name: "Feelings & descriptions"
+    rationale: >
+      Adjectives for topic-comment sentences ('ME TIRED'); body-location
+      cluster (happy/my/please) gives clean movement minimal pairs.
+    signs:
+      - gloss: happy
+        asllex_id: happy
+        translation: happy
+        lexical_class: Adjective
+        handshape: open_b
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Curved
+        repeated: true
+        sign_type: OneHanded
+      - gloss: sad
+        asllex_id: sad
+        translation: sad
+        lexical_class: Adjective
+        handshape: "5"
+        major_location: Head
+        minor_location: HeadAway
+        movement: Straight
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+      - gloss: tired
+        asllex_id: tired
+        translation: tired
+        lexical_class: Adjective
+        handshape: c
+        major_location: Body
+        minor_location: Clavicle
+        movement: Curved
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+      - gloss: hungry
+        asllex_id: hungry
+        translation: hungry
+        lexical_class: Adjective
+        handshape: c
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: good
+        asllex_id: good
+        translation: good
+        lexical_class: Adjective
+        handshape: open_b
+        major_location: Head
+        minor_location: Chin
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: love
+        asllex_id: love
+        translation: love
+        lexical_class: Verb
+        handshape: a
+        major_location: Body
+        minor_location: TorsoTop
+        movement: None
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+
+  - id: 9
+    name: Time
+    rationale: >
+      Time signs are placed early in ASL sentences (time-first construction);
+      introduces the Arm location (time = tap wrist).
+    signs:
+      - gloss: today
+        asllex_id: today
+        translation: today
+        lexical_class: Noun
+        handshape: y
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: true
+        sign_type: SymmetricalOrAlternating
+      - gloss: tomorrow
+        asllex_id: tomorrow
+        translation: tomorrow
+        lexical_class: Noun
+        handshape: a
+        major_location: Head
+        minor_location: CheekNose
+        movement: Curved
+        repeated: false
+        sign_type: OneHanded
+      - gloss: now
+        asllex_id: now
+        translation: now
+        lexical_class: Adverb
+        handshape: y
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Straight
+        repeated: false
+        sign_type: SymmetricalOrAlternating
+      - gloss: time
+        asllex_id: time
+        translation: time
+        lexical_class: Noun
+        handshape: bent_1
+        major_location: Arm
+        minor_location: WristBack
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+
+  - id: 10
+    name: Colors
+    rationale: >
+      Adjectives sharing Neutral location + None/repeated movement, so they
+      differ almost only in handshape -- the densest minimal-pair set in the
+      vocabulary.
+    signs:
+      - gloss: red
+        asllex_id: red
+        translation: red
+        lexical_class: Adjective
+        handshape: "1"
+        major_location: Head
+        minor_location: Mouth
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: blue
+        asllex_id: blue
+        translation: blue
+        lexical_class: Adjective
+        handshape: closed_b
+        major_location: Neutral
+        minor_location: Neutral
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: green
+        asllex_id: green
+        translation: green
+        lexical_class: Adjective
+        handshape: g
+        major_location: Neutral
+        minor_location: Neutral
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: yellow
+        asllex_id: yellow
+        translation: yellow
+        lexical_class: Adjective
+        handshape: y
+        major_location: Neutral
+        minor_location: Neutral
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+      - gloss: black
+        asllex_id: black
+        translation: black
+        lexical_class: Adjective
+        handshape: "1"
+        major_location: Head
+        minor_location: Forehead
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: white
+        asllex_id: white
+        translation: white
+        lexical_class: Adjective
+        handshape: flatspread_5
+        major_location: Body
+        minor_location: TorsoTop
+        movement: Straight
+        repeated: true
+        sign_type: OneHanded
+
+  - id: 11
+    name: "Objects & places"
+    rationale: >
+      Concrete nouns to round out sentence material; mix of symmetric two-
+      handed (book, car) and one-handed (home, dog) forms.
+    signs:
+      - gloss: book
+        asllex_id: book
+        translation: book
+        lexical_class: Noun
+        handshape: open_b
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Curved
+        repeated: true
+        sign_type: SymmetricalOrAlternating
+      - gloss: car
+        asllex_id: car
+        translation: car
+        lexical_class: Noun
+        handshape: s
+        major_location: Neutral
+        minor_location: Neutral
+        movement: Curved
+        repeated: true
+        sign_type: SymmetricalOrAlternating
+      - gloss: home
+        asllex_id: home
+        translation: home
+        lexical_class: Adverb
+        handshape: o
+        major_location: Head
+        minor_location: Chin
+        movement: Straight
+        repeated: false
+        sign_type: OneHanded
+      - gloss: school
+        asllex_id: school
+        translation: school
+        lexical_class: Noun
+        handshape: "5"
+        major_location: Hand
+        minor_location: Palm
+        movement: Straight
+        repeated: true
+        sign_type: AsymmetricalSameHandshape
+      - gloss: dog
+        asllex_id: dog
+        translation: dog
+        lexical_class: Noun
+        handshape: d
+        major_location: Neutral
+        minor_location: Neutral
+        movement: None
+        repeated: true
+        sign_type: OneHanded
+
+# Contrastive minimal pairs: signs differing in exactly ONE phonological parameter.
+# When the learner model detects a confusion between two such signs, the task
+# generator fires a contrastive drill on the differing parameter (Phase 6).
+contrastive_pairs:
+  handshape:
+    - pair: [you, your]
+      differs: "1 vs 5"
+    - pair: [you, "yes"]
+      differs: "1 vs s"
+    - pair: ["yes", ok]
+      differs: s vs o
+    - pair: [blue, green]
+      differs: closed_b vs g
+    - pair: [green, yellow]
+      differs: g vs y
+    - pair: [yellow, dog]
+      differs: y vs d
+    - pair: [blue, milk]
+      differs: closed_b vs s
+  major_location:
+    - pair: [me, he]
+      differs: Body vs Neutral
+    - pair: [me, black]
+      differs: Body vs Head
+    - pair: [he, black]
+      differs: Neutral vs Head
+  minor_location:
+    - pair: [mother, father]
+      differs: Chin vs Forehead
+    - pair: [who, sister]
+      differs: Chin vs CheekNose
+  movement:
+    - pair: [me, we]
+      differs: Straight vs Curved
+    - pair: [my, happy]
+      differs: Straight vs Curved
+    - pair: [my, please]
+      differs: Straight vs Circular
+    - pair: [please, happy]
+      differs: Circular vs Curved
+
+# v2 grammatical constructions for the Phase 5 gloss rule engine. English -> ordered
+# ASL gloss + non-manual tags. Examples use only the 60 signs above.
+# NOTE: these are an approximation of a living language and are gated on Deaf review
+# before any correction built from them is shown to a user as authoritative.
+constructions_v2:
+  - id: time_first
+    name: Time-first
+    description: >
+      Time signs move to the front of the clause; the rest follows in topic-
+      comment or SVO order.
+    non_manual: none
+    example_english: I work today.
+    example_gloss: TODAY ME WORK
+  - id: topic_comment
+    name: Topic-comment
+    description: >
+      Front a noun as the topic (marked by brow raise + slight pause), then
+      comment on it.
+    non_manual: brow_raise over the topic
+    example_english: I want coffee.
+    example_gloss: "COFFEE, ME WANT ^brow_raise-on-topic"
+  - id: yes_no_question
+    name: Yes/no question
+    description: >
+      Signed word order is unchanged; the whole clause is marked non-manually
+      with raised brows (and often a forward head tilt).
+    non_manual: brow_raise + head-forward over the whole clause
+    example_english: Are you tired?
+    example_gloss: YOU TIRED ^brow_raise
+  - id: wh_question
+    name: Wh-question
+    description: >
+      The wh-sign typically comes clause-finally (sometimes doubled), marked
+      with lowered/furrowed brows.
+    non_manual: brow_furrow over the clause; wh-sign clause-final
+    example_english: What is your name?
+    example_gloss: YOUR NAME WHAT ^brow_furrow
+  - id: negation
+    name: Negation
+    description: >
+      Negate by marking the predicate with a headshake (and optionally the NO
+      sign); word order is otherwise unchanged.
+    non_manual: headshake over the negated predicate
+    example_english: "I don't want coffee."
+    example_gloss: "ME WANT COFFEE ^headshake  (or: ME WANT COFFEE NO)"
