@@ -6,23 +6,36 @@
 # grounded answer key itself -- the answer key is the reference video + pose
 # sequences in data/ (Phase 1). Here I only decide WHAT to teach and in what order.
 #
-# Phonological fields (handshape / *_location / movement / sign_type) are copied
-# verbatim from ASL-LEX 2.0 (data/ASL_LEX) and describe the FIRST morpheme of each
-# sign. They are the target parameters the grader diagnoses and the axes the
-# contrastive drills contrast on.
+# PROVENANCE -- three tiers, do not mix them:
+#   1. VERBATIM FROM ASL-LEX 2.0 (data/ASL_LEX): handshape, major_location,
+#      minor_location, movement, repeated, sign_type, lexical_class.
+#      These describe the FIRST MORPHEME of each sign (see caveats.first_morpheme).
+#   2. AUTHOR-ADDED, UNVERIFIED: english_lemmas, verb_class. Gated on Deaf review
+#      (verb_class) -- see status.verb_class_verified.
+#   3. DERIVED: coverage, contrastive_pairs. Machine-generated from tier 1 by
+#      tools/validate_curriculum.py -- never hand-edit; regenerate.
 # ==========================================================================
 
-version: 0.1
+version: 0.2
 count: 60
 
 principle: >
   Grounded answer key, dynamic everything else. This file fixes only the sign
-  list, ordering, and v2 constructions; diagnosis, sequencing, and practice are
-  generated live against real Deaf-signer references.
+  list, introduction order, and v2 constructions; diagnosis, sequencing, and
+  practice are generated live against real Deaf-signer references.
+
+changelog:
+  - "0.2: contrastive_pairs regenerated from the phonological vectors (6 of the 16"
+  - "     hand-written pairs were not minimal). translation -> english_lemmas (the"
+  - "     old field just echoed the gloss and could not feed the 5b lexicon)."
+  - "     Added verb_class. Construction examples now use ID-glosses. units"
+  - "     reframed as an unlock graph, not a fixed lesson order. Added"
+  - "     backfill_from_asllex for the fields the grader needs but this file lacks."
 
 sources:
   vocabulary_and_recognizability: "ASL-LEX 2.0 (SignFrequency, PercentUnknown, phonology)"
   reference_video: "ASL Citizen (Phase 1) -- consented, Deaf-involved, domain-matched"
+  naming_authority: "ASL SignBank ID-glosses (ASL-LEX is cross-referenced to it)"
 
 selection_criteria:
   - "Beginner usefulness: high subjective SignFrequency, low PercentUnknown (<= 0.10)."
@@ -35,33 +48,70 @@ status:
                                  # extracted, and map asllex_id -> ASL Citizen gloss.
                                  # (ASL Citizen's 2,731 signs are drawn from ASL-LEX,
                                  # so overlap is expected, but confirm before Phase 1.)
+  verb_class_verified: false     # TODO: author-assigned plain/agreement/spatial.
+                                 # Gated on Deaf review before any correction built
+                                 # on it is shown to a user as authoritative.
+  english_lemmas_reviewed: false # TODO: English-side mapping for the 5b lexicon.
+                                 # Widen with synonyms as the rule engine needs.
+
+caveats:
+  first_morpheme: >
+    ASL-LEX phonology describes the FIRST MORPHEME only. For multi-morphemic
+    signs the parameters below are therefore incomplete, and parameter-level
+    diagnosis against them would be wrong for the later morphemes. Before Phase 4,
+    flag multi-morphemic signs (check the ASL-LEX morpheme/compound column) and
+    either exclude them from parameter-level feedback or annotate the full form.
+  lexical_class_is_not_english_pos: >
+    lexical_class is ASL-LEX's class for the SIGN, not the POS of the English
+    prompt word (e.g. drink is coded Noun while sitting in the verbs unit; home
+    is Adverb). The 5b rule engine must take English POS from spaCy and use
+    lexical_class only for ASL-side decisions. Never cross the two.
+  minor_location_drill_material: >
+    Only ONE true minor_location minimal pair exists in this vocabulary
+    (mother/father). If minor-location diagnosis matters, add signs that contrast
+    within a major region -- otherwise the contrastive drill for that parameter
+    has almost nothing to fire on.
+
+# Fields the grader's phonological heads need (see project_workflow.md Phase 4)
+# that are NOT in this file. Backfill from the ASL-LEX CSV -- do not invent them.
+# Confirm the exact column names against data/ASL_LEX before writing the join.
+backfill_from_asllex:
+  - selected_fingers      # more actionable than a single handshape label
+  - flexion               # "fingers right, flexion off" is real feedback
+  - nondominant_handshape # required for the AsymmetricalDifferentHandshape signs
+  - orientation           # listed as a grader head; absent here
+  - sign_frequency        # cited in selection_criteria but not recorded
+  - percent_unknown       # cited in selection_criteria but not recorded
 
 # Coverage of the chosen 60 across ASL-LEX's phonological parameter space.
+# DERIVED -- regenerate with tools/validate_curriculum.py.
 coverage:
   major_location: {Neutral: 24, Head: 18, Body: 11, Hand: 6, Arm: 1}
   distinct_handshapes: 20
-  movement: {Straight: 32, Curved: 12, None: 12, Circular: 3, Other: 1}
+  movement: {Straight: 33, None: 12, Curved: 11, Circular: 3, Other: 1}
 
 # The parameter vocabularies the grader's phonological heads predict (from ASL-LEX).
 parameter_space:
   major_location: [Neutral, Head, Body, Hand, Arm]
   movement: [Straight, Curved, Circular, None, BackAndForth, Z-shaped, X-shaped, Other]
   handshapes_in_curriculum:
-    ["1", "5", open_b, closed_b, flat_h, flatspread_5, s, a, c, o, l, y, h, v,
-     w, g, d, f, curved_1, bent_1]
+    ["1", "5", "a", bent_1, "c", closed_b, curved_1, "d", "f", flat_h, flatspread_5, "g", "h", "l", "o", open_b, "s", "v", "w", "y"]
 
-# Teaching order: units are taught top to bottom; signs within a unit top to bottom.
+# Introduction order (an UNLOCK GRAPH, not a fixed lesson path). A unit's signs
+# become available for practice once the preceding units are unlocked; the Phase 6
+# adaptive engine still chooses WHAT to drill among unlocked material, from the
+# learner's gaps. Nothing here fixes the sequence a learner actually experiences.
 units:
   - id: 1
-    name: "Pronouns & pointing"
+    name: Pronouns & pointing
     rationale: >
       Deixis first: every later sentence needs a subject/object. All share the
-      '1' handshape, so early practice isolates location and movement, not
-      handshape.
+      '1' handshape, so early practice isolates location and movement, not ha
+      ndshape.
     signs:
       - gloss: you
         asllex_id: you
-        translation: you
+        english_lemmas: [you]
         lexical_class: Minor
         handshape: "1"
         major_location: Neutral
@@ -71,7 +121,7 @@ units:
         sign_type: OneHanded
       - gloss: me
         asllex_id: me
-        translation: me
+        english_lemmas: [me, i]
         lexical_class: Minor
         handshape: "1"
         major_location: Body
@@ -81,7 +131,7 @@ units:
         sign_type: OneHanded
       - gloss: he
         asllex_id: he
-        translation: he
+        english_lemmas: [he, she, him, her]
         lexical_class: Minor
         handshape: "1"
         major_location: Neutral
@@ -91,7 +141,7 @@ units:
         sign_type: OneHanded
       - gloss: we
         asllex_id: we
-        translation: we
+        english_lemmas: [we, us]
         lexical_class: Minor
         handshape: "1"
         major_location: Body
@@ -101,7 +151,7 @@ units:
         sign_type: OneHanded
       - gloss: my
         asllex_id: my
-        translation: my
+        english_lemmas: [my, mine]
         lexical_class: Minor
         handshape: open_b
         major_location: Body
@@ -111,7 +161,7 @@ units:
         sign_type: OneHanded
       - gloss: your
         asllex_id: your
-        translation: your
+        english_lemmas: [your, yours]
         lexical_class: Minor
         handshape: "5"
         major_location: Neutral
@@ -123,12 +173,12 @@ units:
   - id: 2
     name: Question words
     rationale: >
-      Enables interaction immediately and seeds the v2 wh-question
-      construction. Handshape-diverse (5, l, 1, y, c) at Head/Neutral.
+      Enables interaction immediately and seeds the v2 wh-question constructio
+      n. Handshape-diverse (5, l, 1, y, c) at Head/Neutral.
     signs:
       - gloss: what_1
         asllex_id: what_1
-        translation: what_1
+        english_lemmas: [what]
         lexical_class: Minor
         handshape: "5"
         major_location: Neutral
@@ -138,17 +188,17 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: who
         asllex_id: who
-        translation: who
+        english_lemmas: [who, whom]
         lexical_class: Minor
-        handshape: l
+        handshape: "l"
         major_location: Head
         minor_location: Chin
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: where
         asllex_id: where
-        translation: where
+        english_lemmas: [where]
         lexical_class: Minor
         handshape: "1"
         major_location: Neutral
@@ -158,9 +208,9 @@ units:
         sign_type: OneHanded
       - gloss: why
         asllex_id: why
-        translation: why
+        english_lemmas: [why]
         lexical_class: Minor
-        handshape: y
+        handshape: "y"
         major_location: Head
         minor_location: Forehead
         movement: Straight
@@ -168,9 +218,9 @@ units:
         sign_type: OneHanded
       - gloss: how
         asllex_id: how
-        translation: how
+        english_lemmas: [how]
         lexical_class: Minor
-        handshape: c
+        handshape: "c"
         major_location: Neutral
         minor_location: Neutral
         movement: Curved
@@ -178,14 +228,14 @@ units:
         sign_type: SymmetricalOrAlternating
 
   - id: 3
-    name: "Greetings & courtesy"
+    name: Greetings & courtesy
     rationale: >
-      High-frequency social signs for a first real exchange; spread across
-      Head, Body, and Hand locations.
+      High-frequency social signs for a first real exchange; spread across Hea
+      d, Body, and Hand locations.
     signs:
       - gloss: hello
         asllex_id: hello
-        translation: hello
+        english_lemmas: [hello, hi]
         lexical_class: Minor
         handshape: closed_b
         major_location: Head
@@ -195,8 +245,9 @@ units:
         sign_type: OneHanded
       - gloss: thank_you
         asllex_id: thank_you
-        translation: thank_you
+        english_lemmas: [thank, thanks]
         lexical_class: Verb
+        verb_class: agreement   # UNVERIFIED
         handshape: open_b
         major_location: Head
         minor_location: Mouth
@@ -205,7 +256,7 @@ units:
         sign_type: OneHanded
       - gloss: please
         asllex_id: please
-        translation: please
+        english_lemmas: [please]
         lexical_class: Adverb
         handshape: open_b
         major_location: Body
@@ -215,9 +266,9 @@ units:
         sign_type: OneHanded
       - gloss: sorry
         asllex_id: sorry
-        translation: sorry
+        english_lemmas: [sorry]
         lexical_class: Adjective
-        handshape: a
+        handshape: "a"
         major_location: Body
         minor_location: TorsoTop
         movement: Circular
@@ -225,7 +276,7 @@ units:
         sign_type: OneHanded
       - gloss: fine_1
         asllex_id: fine_1
-        translation: fine_1
+        english_lemmas: [fine]
         lexical_class: Adjective
         handshape: "5"
         major_location: Body
@@ -235,9 +286,9 @@ units:
         sign_type: OneHanded
       - gloss: name
         asllex_id: name
-        translation: name
+        english_lemmas: [name]
         lexical_class: Noun
-        handshape: h
+        handshape: "h"
         major_location: Hand
         minor_location: FingerRadial
         movement: Straight
@@ -245,16 +296,16 @@ units:
         sign_type: DominanceViolation
 
   - id: 4
-    name: "Yes / no & wants"
+    name: Yes / no & wants
     rationale: >
       Minimal responses that make the tutor's drills conversational; seeds the
       yes/no-question and negation constructions.
     signs:
       - gloss: "yes"
         asllex_id: "yes"
-        translation: "yes"
+        english_lemmas: ["yes"]
         lexical_class: Minor
-        handshape: s
+        handshape: "s"
         major_location: Neutral
         minor_location: Neutral
         movement: Straight
@@ -262,19 +313,19 @@ units:
         sign_type: OneHanded
       - gloss: "no"
         asllex_id: "no"
-        translation: "no"
+        english_lemmas: ["no"]
         lexical_class: Minor
         handshape: flat_h
         major_location: Neutral
         minor_location: Neutral
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: ok
         asllex_id: ok
-        translation: ok
+        english_lemmas: [ok, okay]
         lexical_class: Minor
-        handshape: o
+        handshape: "o"
         major_location: Neutral
         minor_location: Neutral
         movement: Straight
@@ -282,8 +333,9 @@ units:
         sign_type: OneHanded
       - gloss: want_2
         asllex_id: want_2
-        translation: want_2
+        english_lemmas: [want]
         lexical_class: Verb
+        verb_class: plain   # UNVERIFIED
         handshape: "5"
         major_location: Neutral
         minor_location: Neutral
@@ -292,14 +344,14 @@ units:
         sign_type: SymmetricalOrAlternating
 
   - id: 5
-    name: "Family & people"
+    name: Family & people
     rationale: >
-      Classic beginner semantic set; strong minor-location contrasts at the
-      head (mother=chin vs father=forehead) for precise location diagnosis.
+      Classic beginner semantic set; strong minor-location contrasts at the he
+      ad (mother=chin vs father=forehead) for precise location diagnosis.
     signs:
       - gloss: mother
         asllex_id: mother
-        translation: mother
+        english_lemmas: [mother, mom]
         lexical_class: Noun
         handshape: "5"
         major_location: Head
@@ -309,7 +361,7 @@ units:
         sign_type: OneHanded
       - gloss: father
         asllex_id: father
-        translation: father
+        english_lemmas: [father, dad]
         lexical_class: Noun
         handshape: "5"
         major_location: Head
@@ -319,29 +371,29 @@ units:
         sign_type: OneHanded
       - gloss: sister
         asllex_id: sister
-        translation: sister
+        english_lemmas: [sister]
         lexical_class: Noun
-        handshape: l
+        handshape: "l"
         major_location: Head
         minor_location: CheekNose
-        movement: None
+        movement: "None"
         repeated: false
         sign_type: OneHanded
       - gloss: brother
         asllex_id: brother
-        translation: brother
+        english_lemmas: [brother]
         lexical_class: Noun
-        handshape: a
+        handshape: "a"
         major_location: Head
         minor_location: Forehead
-        movement: None
+        movement: "None"
         repeated: false
         sign_type: OneHanded
       - gloss: family
         asllex_id: family
-        translation: family
+        english_lemmas: [family]
         lexical_class: Noun
-        handshape: f
+        handshape: "f"
         major_location: Neutral
         minor_location: Neutral
         movement: Curved
@@ -349,7 +401,7 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: baby
         asllex_id: baby
-        translation: baby
+        english_lemmas: [baby]
         lexical_class: Noun
         handshape: open_b
         major_location: Neutral
@@ -359,7 +411,7 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: friend
         asllex_id: friend
-        translation: friend
+        english_lemmas: [friend]
         lexical_class: Noun
         handshape: curved_1
         major_location: Neutral
@@ -371,14 +423,15 @@ units:
   - id: 6
     name: Everyday verbs
     rationale: >
-      Core predicates to build simple clauses; introduces two-handed
-      asymmetric signs (work, learn, read) after one-handed signs are stable.
+      Core predicates to build simple clauses; introduces two-handed asymmetri
+      c signs (work, learn, read) after one-handed signs are stable.
     signs:
       - gloss: eat_1
         asllex_id: eat_1
-        translation: eat_1
+        english_lemmas: [eat]
         lexical_class: Verb
-        handshape: o
+        verb_class: plain   # UNVERIFIED
+        handshape: "o"
         major_location: Head
         minor_location: Mouth
         movement: Straight
@@ -386,9 +439,10 @@ units:
         sign_type: OneHanded
       - gloss: drink
         asllex_id: drink
-        translation: drink
+        english_lemmas: [drink]
         lexical_class: Noun
-        handshape: c
+        verb_class: plain   # UNVERIFIED
+        handshape: "c"
         major_location: Head
         minor_location: HeadAway
         movement: Straight
@@ -396,8 +450,9 @@ units:
         sign_type: OneHanded
       - gloss: sleep
         asllex_id: sleep
-        translation: sleep
+        english_lemmas: [sleep]
         lexical_class: Verb
+        verb_class: plain   # UNVERIFIED
         handshape: "5"
         major_location: Head
         minor_location: HeadAway
@@ -406,9 +461,10 @@ units:
         sign_type: OneHanded
       - gloss: work
         asllex_id: work
-        translation: work
+        english_lemmas: [work]
         lexical_class: Verb
-        handshape: s
+        verb_class: plain   # UNVERIFIED
+        handshape: "s"
         major_location: Hand
         minor_location: PalmBack
         movement: Straight
@@ -416,8 +472,9 @@ units:
         sign_type: AsymmetricalSameHandshape
       - gloss: go
         asllex_id: go
-        translation: go
+        english_lemmas: [go]
         lexical_class: Verb
+        verb_class: spatial   # UNVERIFIED
         handshape: "1"
         major_location: Neutral
         minor_location: Neutral
@@ -426,8 +483,9 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: come
         asllex_id: come
-        translation: come
+        english_lemmas: [come]
         lexical_class: Verb
+        verb_class: spatial   # UNVERIFIED
         handshape: open_b
         major_location: Neutral
         minor_location: Neutral
@@ -436,19 +494,21 @@ units:
         sign_type: OneHanded
       - gloss: learn
         asllex_id: learn
-        translation: learn
+        english_lemmas: [learn]
         lexical_class: Verb
+        verb_class: plain   # UNVERIFIED
         handshape: flatspread_5
         major_location: Hand
         minor_location: Palm
-        movement: None
+        movement: "None"
         repeated: false
         sign_type: AsymmetricalDifferentHandshape
       - gloss: read
         asllex_id: read
-        translation: read
+        english_lemmas: [read]
         lexical_class: Verb
-        handshape: v
+        verb_class: plain   # UNVERIFIED
+        handshape: "v"
         major_location: Hand
         minor_location: HandAway
         movement: Straight
@@ -456,16 +516,16 @@ units:
         sign_type: AsymmetricalDifferentHandshape
 
   - id: 7
-    name: "Food & drink"
+    name: Food & drink
     rationale: >
       Concrete, high-iconicity nouns; pairs naturally with want/eat/drink for
       early sentences.
     signs:
       - gloss: water
         asllex_id: water
-        translation: water
+        english_lemmas: [water]
         lexical_class: Noun
-        handshape: w
+        handshape: "w"
         major_location: Head
         minor_location: Chin
         movement: Straight
@@ -473,19 +533,19 @@ units:
         sign_type: OneHanded
       - gloss: milk
         asllex_id: milk
-        translation: milk
+        english_lemmas: [milk]
         lexical_class: Noun
-        handshape: s
+        handshape: "s"
         major_location: Neutral
         minor_location: Neutral
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: coffee
         asllex_id: coffee
-        translation: coffee
+        english_lemmas: [coffee]
         lexical_class: Noun
-        handshape: s
+        handshape: "s"
         major_location: Hand
         minor_location: FingerRadial
         movement: Circular
@@ -493,14 +553,14 @@ units:
         sign_type: AsymmetricalSameHandshape
 
   - id: 8
-    name: "Feelings & descriptions"
+    name: Feelings & descriptions
     rationale: >
-      Adjectives for topic-comment sentences ('ME TIRED'); body-location
-      cluster (happy/my/please) gives clean movement minimal pairs.
+      Adjectives for topic-comment sentences ('ME TIRED'); body-location clust
+      er (happy/my/please) gives clean movement minimal pairs.
     signs:
       - gloss: happy
         asllex_id: happy
-        translation: happy
+        english_lemmas: [happy]
         lexical_class: Adjective
         handshape: open_b
         major_location: Body
@@ -510,7 +570,7 @@ units:
         sign_type: OneHanded
       - gloss: sad
         asllex_id: sad
-        translation: sad
+        english_lemmas: [sad]
         lexical_class: Adjective
         handshape: "5"
         major_location: Head
@@ -520,9 +580,9 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: tired
         asllex_id: tired
-        translation: tired
+        english_lemmas: [tired]
         lexical_class: Adjective
-        handshape: c
+        handshape: "c"
         major_location: Body
         minor_location: Clavicle
         movement: Curved
@@ -530,9 +590,9 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: hungry
         asllex_id: hungry
-        translation: hungry
+        english_lemmas: [hungry]
         lexical_class: Adjective
-        handshape: c
+        handshape: "c"
         major_location: Body
         minor_location: TorsoTop
         movement: Straight
@@ -540,7 +600,7 @@ units:
         sign_type: OneHanded
       - gloss: good
         asllex_id: good
-        translation: good
+        english_lemmas: [good]
         lexical_class: Adjective
         handshape: open_b
         major_location: Head
@@ -550,12 +610,13 @@ units:
         sign_type: OneHanded
       - gloss: love
         asllex_id: love
-        translation: love
+        english_lemmas: [love]
         lexical_class: Verb
-        handshape: a
+        verb_class: plain   # UNVERIFIED
+        handshape: "a"
         major_location: Body
         minor_location: TorsoTop
-        movement: None
+        movement: "None"
         repeated: false
         sign_type: SymmetricalOrAlternating
 
@@ -567,9 +628,9 @@ units:
     signs:
       - gloss: today
         asllex_id: today
-        translation: today
+        english_lemmas: [today]
         lexical_class: Noun
-        handshape: y
+        handshape: "y"
         major_location: Neutral
         minor_location: Neutral
         movement: Straight
@@ -577,9 +638,9 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: tomorrow
         asllex_id: tomorrow
-        translation: tomorrow
+        english_lemmas: [tomorrow]
         lexical_class: Noun
-        handshape: a
+        handshape: "a"
         major_location: Head
         minor_location: CheekNose
         movement: Curved
@@ -587,9 +648,9 @@ units:
         sign_type: OneHanded
       - gloss: now
         asllex_id: now
-        translation: now
+        english_lemmas: [now]
         lexical_class: Adverb
-        handshape: y
+        handshape: "y"
         major_location: Neutral
         minor_location: Neutral
         movement: Straight
@@ -597,7 +658,7 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: time
         asllex_id: time
-        translation: time
+        english_lemmas: [time]
         lexical_class: Noun
         handshape: bent_1
         major_location: Arm
@@ -609,53 +670,53 @@ units:
   - id: 10
     name: Colors
     rationale: >
-      Adjectives sharing Neutral location + None/repeated movement, so they
-      differ almost only in handshape -- the densest minimal-pair set in the
-      vocabulary.
+      Adjectives sharing Neutral location + None/repeated movement, so they di
+      ffer almost only in handshape -- the densest minimal-pair set in the voc
+      abulary.
     signs:
       - gloss: red
         asllex_id: red
-        translation: red
+        english_lemmas: [red]
         lexical_class: Adjective
         handshape: "1"
         major_location: Head
         minor_location: Mouth
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: blue
         asllex_id: blue
-        translation: blue
+        english_lemmas: [blue]
         lexical_class: Adjective
         handshape: closed_b
         major_location: Neutral
         minor_location: Neutral
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: green
         asllex_id: green
-        translation: green
+        english_lemmas: [green]
         lexical_class: Adjective
-        handshape: g
+        handshape: "g"
         major_location: Neutral
         minor_location: Neutral
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: yellow
         asllex_id: yellow
-        translation: yellow
+        english_lemmas: [yellow]
         lexical_class: Adjective
-        handshape: y
+        handshape: "y"
         major_location: Neutral
         minor_location: Neutral
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
       - gloss: black
         asllex_id: black
-        translation: black
+        english_lemmas: [black]
         lexical_class: Adjective
         handshape: "1"
         major_location: Head
@@ -665,7 +726,7 @@ units:
         sign_type: OneHanded
       - gloss: white
         asllex_id: white
-        translation: white
+        english_lemmas: [white]
         lexical_class: Adjective
         handshape: flatspread_5
         major_location: Body
@@ -675,14 +736,14 @@ units:
         sign_type: OneHanded
 
   - id: 11
-    name: "Objects & places"
+    name: Objects & places
     rationale: >
-      Concrete nouns to round out sentence material; mix of symmetric two-
-      handed (book, car) and one-handed (home, dog) forms.
+      Concrete nouns to round out sentence material; mix of symmetric two- han
+      ded (book, car) and one-handed (home, dog) forms.
     signs:
       - gloss: book
         asllex_id: book
-        translation: book
+        english_lemmas: [book]
         lexical_class: Noun
         handshape: open_b
         major_location: Neutral
@@ -692,9 +753,9 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: car
         asllex_id: car
-        translation: car
+        english_lemmas: [car]
         lexical_class: Noun
-        handshape: s
+        handshape: "s"
         major_location: Neutral
         minor_location: Neutral
         movement: Curved
@@ -702,9 +763,9 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: home
         asllex_id: home
-        translation: home
+        english_lemmas: [home]
         lexical_class: Adverb
-        handshape: o
+        handshape: "o"
         major_location: Head
         minor_location: Chin
         movement: Straight
@@ -712,7 +773,7 @@ units:
         sign_type: OneHanded
       - gloss: school
         asllex_id: school
-        translation: school
+        english_lemmas: [school]
         lexical_class: Noun
         handshape: "5"
         major_location: Hand
@@ -722,58 +783,167 @@ units:
         sign_type: AsymmetricalSameHandshape
       - gloss: dog
         asllex_id: dog
-        translation: dog
+        english_lemmas: [dog]
         lexical_class: Noun
-        handshape: d
+        handshape: "d"
         major_location: Neutral
         minor_location: Neutral
-        movement: None
+        movement: "None"
         repeated: true
         sign_type: OneHanded
 
 # Contrastive minimal pairs: signs differing in exactly ONE phonological parameter.
 # When the learner model detects a confusion between two such signs, the task
 # generator fires a contrastive drill on the differing parameter (Phase 6).
+#
+# DERIVED -- machine-generated from the vectors above. DO NOT HAND-EDIT; the
+# previous hand-written list had 6 of 16 pairs differing in two parameters, which
+# would have drilled an un-isolated contrast. Regenerate after any vocab change.
+#
+# Rules: a pair is minimal on F iff it differs on F and agrees on every other
+# field in [handshape, major_location, minor_location, movement, repeated,
+# sign_type] -- except that major_location pairs are exempt from matching
+# minor_location, since minor is nested inside major.
 contrastive_pairs:
-  handshape:
+  handshape:   # 40
+    - pair: [baby, today]
+      differs: "open_b vs y"
+    - pair: [baby, what_1]
+      differs: "open_b vs 5"
+    - pair: [black, hello]
+      differs: "1 vs closed_b"
+    - pair: [black, why]
+      differs: "1 vs y"
+    - pair: [blue, dog]
+      differs: "closed_b vs d"
+    - pair: [blue, green]
+      differs: "closed_b vs g"
+    - pair: [blue, milk]
+      differs: "closed_b vs s"
+    - pair: [blue, "no"]
+      differs: "closed_b vs flat_h"
+    - pair: [blue, yellow]
+      differs: "closed_b vs y"
+    - pair: [book, car]
+      differs: "open_b vs s"
+    - pair: [dog, green]
+      differs: "d vs g"
+    - pair: [dog, milk]
+      differs: "d vs s"
+    - pair: [dog, "no"]
+      differs: "d vs flat_h"
+    - pair: [dog, yellow]
+      differs: "d vs y"
+    - pair: [drink, sleep]
+      differs: "c vs 5"
+    - pair: [family, go]
+      differs: "f vs 1"
+    - pair: [family, how]
+      differs: "f vs c"
+    - pair: [fine_1, white]
+      differs: "5 vs flatspread_5"
+    - pair: [go, how]
+      differs: "1 vs c"
+    - pair: [good, home]
+      differs: "open_b vs o"
+    - pair: [green, milk]
+      differs: "g vs s"
+    - pair: [green, "no"]
+      differs: "g vs flat_h"
+    - pair: [green, yellow]
+      differs: "g vs y"
+    - pair: [he, ok]
+      differs: "1 vs o"
+    - pair: [he, your]
+      differs: "1 vs 5"
+    - pair: [hello, why]
+      differs: "closed_b vs y"
+    - pair: [hungry, me]
+      differs: "c vs 1"
+    - pair: [hungry, my]
+      differs: "c vs open_b"
+    - pair: [me, my]
+      differs: "1 vs open_b"
+    - pair: [milk, "no"]
+      differs: "s vs flat_h"
+    - pair: [milk, yellow]
+      differs: "s vs y"
+    - pair: [mother, water]
+      differs: "5 vs w"
+    - pair: ["no", yellow]
+      differs: "flat_h vs y"
+    - pair: [now, want_2]
+      differs: "y vs 5"
+    - pair: [ok, you]
+      differs: "o vs 1"
+    - pair: [ok, your]
+      differs: "o vs 5"
+    - pair: [please, sorry]
+      differs: "open_b vs a"
+    - pair: [today, what_1]
+      differs: "y vs 5"
+    - pair: [where, "yes"]
+      differs: "1 vs s"
     - pair: [you, your]
       differs: "1 vs 5"
-    - pair: [you, "yes"]
-      differs: "1 vs s"
-    - pair: ["yes", ok]
-      differs: s vs o
-    - pair: [blue, green]
-      differs: closed_b vs g
-    - pair: [green, yellow]
-      differs: g vs y
-    - pair: [yellow, dog]
-      differs: y vs d
-    - pair: [blue, milk]
-      differs: closed_b vs s
-  major_location:
-    - pair: [me, he]
-      differs: Body vs Neutral
-    - pair: [me, black]
-      differs: Body vs Head
-    - pair: [he, black]
-      differs: Neutral vs Head
-  minor_location:
-    - pair: [mother, father]
-      differs: Chin vs Forehead
-    - pair: [who, sister]
-      differs: Chin vs CheekNose
-  movement:
-    - pair: [me, we]
-      differs: Straight vs Curved
-    - pair: [my, happy]
-      differs: Straight vs Curved
-    - pair: [my, please]
-      differs: Straight vs Circular
-    - pair: [please, happy]
-      differs: Circular vs Curved
+  major_location:   # 14
+    - pair: [black, he]
+      differs: "Head vs Neutral"
+    - pair: [black, me]
+      differs: "Head vs Body"
+    - pair: [black, you]
+      differs: "Head vs Neutral"
+    - pair: [come, thank_you]
+      differs: "Neutral vs Head"
+    - pair: [drink, hungry]
+      differs: "Head vs Body"
+    - pair: [father, fine_1]
+      differs: "Head vs Body"
+    - pair: [fine_1, mother]
+      differs: "Body vs Head"
+    - pair: [good, my]
+      differs: "Head vs Body"
+    - pair: [he, me]
+      differs: "Neutral vs Body"
+    - pair: [home, ok]
+      differs: "Head vs Neutral"
+    - pair: [how, tired]
+      differs: "Neutral vs Body"
+    - pair: [me, you]
+      differs: "Body vs Neutral"
+    - pair: [sad, want_2]
+      differs: "Head vs Neutral"
+    - pair: [sleep, your]
+      differs: "Head vs Neutral"
+  minor_location:   # 1
+    - pair: [father, mother]
+      differs: "Forehead vs Chin"
+  movement:   # 3
+    - pair: [baby, book]
+      differs: "Straight vs Curved"
+    - pair: [happy, please]
+      differs: "Curved vs Circular"
+    - pair: [milk, "yes"]
+      differs: "None vs Straight"
+  repeated:   # 4
+    - pair: [he, where]
+      differs: "False vs True"
+    - pair: [now, today]
+      differs: "False vs True"
+    - pair: [want_2, what_1]
+      differs: "False vs True"
+    - pair: [where, you]
+      differs: "True vs False"
+  sign_type:   # 2
+    - pair: [sad, sleep]
+      differs: "SymmetricalOrAlternating vs OneHanded"
+    - pair: [want_2, your]
+      differs: "SymmetricalOrAlternating vs OneHanded"
 
 # v2 grammatical constructions for the Phase 5 gloss rule engine. English -> ordered
-# ASL gloss + non-manual tags. Examples use only the 60 signs above.
+# ASL gloss + non-manual tags. Examples use only the 60 signs above, and reference
+# them by ID-GLOSS (WANT_2, WHAT_1 -- not bare WANT/WHAT), so the composer resolves
+# to exactly one sign. NMM = non-manual marker.
 # NOTE: these are an approximation of a living language and are gated on Deaf review
 # before any correction built from them is shown to a user as authoritative.
 constructions_v2:
@@ -792,7 +962,7 @@ constructions_v2:
       comment on it.
     non_manual: brow_raise over the topic
     example_english: I want coffee.
-    example_gloss: "COFFEE, ME WANT ^brow_raise-on-topic"
+    example_gloss: "COFFEE, ME WANT_2 ^brow_raise-on-topic"
   - id: yes_no_question
     name: Yes/no question
     description: >
@@ -808,7 +978,7 @@ constructions_v2:
       with lowered/furrowed brows.
     non_manual: brow_furrow over the clause; wh-sign clause-final
     example_english: What is your name?
-    example_gloss: YOUR NAME WHAT ^brow_furrow
+    example_gloss: YOUR NAME WHAT_1 ^brow_furrow
   - id: negation
     name: Negation
     description: >
@@ -816,4 +986,4 @@ constructions_v2:
       sign); word order is otherwise unchanged.
     non_manual: headshake over the negated predicate
     example_english: "I don't want coffee."
-    example_gloss: "ME WANT COFFEE ^headshake  (or: ME WANT COFFEE NO)"
+    example_gloss: "ME WANT_2 COFFEE ^headshake  (or: ME WANT_2 COFFEE NO)"
