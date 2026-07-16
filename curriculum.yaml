@@ -43,11 +43,7 @@ selection_criteria:
   - "so contrastive minimal-pair drills have material to work with."
 
 status:
-  asl_citizen_confirmed: false   # TODO: confirm every gloss against ASL Citizen's
-                                 # gloss list once the download finishes and is
-                                 # extracted, and map asllex_id -> ASL Citizen gloss.
-                                 # (ASL Citizen's 2,731 signs are drawn from ASL-LEX,
-                                 # so overlap is expected, but confirm before Phase 1.)
+  asl_citizen_confirmed: true # confirmed by tools/resolve_keys.py: all 60 signs resolve to a unique ASL-LEX Code present in the ASL Citizen splits. 5 signs auto-selected a Citizen variant -- see variant_reviewed.
   verb_class_verified: false     # TODO: author-assigned plain/agreement/spatial.
                                  # Gated on Deaf review before any correction built
                                  # on it is shown to a user as authoritative.
@@ -94,8 +90,7 @@ coverage:
 parameter_space:
   major_location: [Neutral, Head, Body, Hand, Arm]
   movement: [Straight, Curved, Circular, None, BackAndForth, Z-shaped, X-shaped, Other]
-  handshapes_in_curriculum:
-    ["1", "5", "a", bent_1, "c", closed_b, curved_1, "d", "f", flat_h, flatspread_5, "g", "h", "l", "o", open_b, "s", "v", "w", "y"]
+  handshapes_in_curriculum: ["1", "5", "a", bent_1, "c", closed_b, curved_1, "d", "f", flat_h, flatspread_5, "g", "h", "l", "o", open_b, "s", "v", "w", "y"]
 
 # Introduction order (an UNLOCK GRAPH, not a fixed lesson path). A unit's signs
 # become available for practice once the preceding units are unlocked; the Phase 6
@@ -240,6 +235,24 @@ units:
         asllex_id: how
         asllex_code: F_02_086
         asl_citizen_gloss: HOW2
+        variant_reviewed: true
+        variant_candidates:
+          - citizen_gloss: HOW2
+            asllex_code: F_02_086
+            asllex_entry_id: how_2
+            sign_frequency: 5.815
+            percent_unknown: 0.0
+            citizen_video_count: 31
+            asllex_example_video:
+            selected: true
+          - citizen_gloss: HOW1
+            asllex_code: D_02_082
+            asllex_entry_id: how
+            sign_frequency: 5.556
+            percent_unknown: 0.0
+            citizen_video_count: 31
+            asllex_example_video:
+            selected: false
         english_lemmas: [how]
         lexical_class: Minor
         handshape: "c"
@@ -455,6 +468,24 @@ units:
         asllex_id: baby
         asllex_code: C_01_017
         asl_citizen_gloss: BABY1
+        variant_reviewed: true
+        variant_candidates:
+          - citizen_gloss: BABY1
+            asllex_code: C_01_017
+            asllex_entry_id: baby
+            sign_frequency: 5.0
+            percent_unknown: 0.0
+            citizen_video_count: 30
+            asllex_example_video:
+            selected: true
+          - citizen_gloss: BABY2
+            asllex_code: K_01_042
+            asllex_entry_id: baby_2
+            sign_frequency: 3.455
+            percent_unknown: 0.185
+            citizen_video_count: 31
+            asllex_example_video:
+            selected: false
         english_lemmas: [baby]
         lexical_class: Noun
         handshape: open_b
@@ -499,6 +530,24 @@ units:
         asllex_id: drink
         asllex_code: B_02_012
         asl_citizen_gloss: DRINK1
+        variant_reviewed: true
+        variant_candidates:
+          - citizen_gloss: DRINK1
+            asllex_code: B_02_012
+            asllex_entry_id: drink
+            sign_frequency: 6.348
+            percent_unknown: 0.0
+            citizen_video_count: 31
+            asllex_example_video: data/ASL_LEX/ASL examples/DRINK.webm
+            selected: true
+          - citizen_gloss: DRINK2
+            asllex_code: K_03_092
+            asllex_entry_id: drink_2
+            sign_frequency: 4.087
+            percent_unknown: 0.08
+            citizen_video_count: 30
+            asllex_example_video:
+            selected: false
         english_lemmas: [drink]
         lexical_class: Noun
         verb_class: plain   # UNVERIFIED
@@ -609,6 +658,24 @@ units:
         asllex_id: milk
         asllex_code: A_01_051
         asl_citizen_gloss: MILK1
+        variant_reviewed: true
+        variant_candidates:
+          - citizen_gloss: MILK1
+            asllex_code: A_01_051
+            asllex_entry_id: milk
+            sign_frequency: 6.233
+            percent_unknown: 0.0
+            citizen_video_count: 30
+            asllex_example_video: data/ASL_LEX/ASL examples/MILK.webm
+            selected: true
+          - citizen_gloss: MILK2
+            asllex_code: K_03_070
+            asllex_entry_id: milk_2
+            sign_frequency: 4.16
+            percent_unknown: 0.0
+            citizen_video_count: 31
+            asllex_example_video:
+            selected: false
         english_lemmas: [milk]
         lexical_class: Noun
         handshape: "s"
@@ -903,6 +970,40 @@ units:
         asllex_id: dog
         asllex_code: A_01_056
         asl_citizen_gloss: DOG1
+        variant_reviewed: true
+        variant_candidates:
+          - citizen_gloss: DOG1
+            asllex_code: A_01_056
+            asllex_entry_id: dog
+            sign_frequency: 6.258
+            percent_unknown: 0.0
+            citizen_video_count: 45
+            asllex_example_video:
+            selected: true
+          - citizen_gloss: DOG2
+            asllex_code: J_02_068
+            asllex_entry_id: dog_3
+            sign_frequency: 5.167
+            percent_unknown: 0.0
+            citizen_video_count: 31
+            asllex_example_video:
+            selected: false
+          - citizen_gloss: DOG4
+            asllex_code: H_02_103
+            asllex_entry_id: dog_4
+            sign_frequency: 4.5
+            percent_unknown: 0.0
+            citizen_video_count: 23
+            asllex_example_video:
+            selected: false
+          - citizen_gloss: DOG3
+            asllex_code: K_01_055
+            asllex_entry_id: dog_2
+            sign_frequency: 4.259
+            percent_unknown: 0.0
+            citizen_video_count: 24
+            asllex_example_video:
+            selected: false
         english_lemmas: [dog]
         lexical_class: Noun
         handshape: "d"
