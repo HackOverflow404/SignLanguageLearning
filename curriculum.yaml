@@ -111,6 +111,8 @@ units:
     signs:
       - gloss: you
         asllex_id: you
+        asllex_code: D_02_065
+        asl_citizen_gloss: YOU
         english_lemmas: [you]
         lexical_class: Minor
         handshape: "1"
@@ -121,6 +123,8 @@ units:
         sign_type: OneHanded
       - gloss: me
         asllex_id: me
+        asllex_code: B_01_068
+        asl_citizen_gloss: ME
         english_lemmas: [me, i]
         lexical_class: Minor
         handshape: "1"
@@ -131,6 +135,8 @@ units:
         sign_type: OneHanded
       - gloss: he
         asllex_id: he
+        asllex_code: F_02_044
+        asl_citizen_gloss: HE
         english_lemmas: [he, she, him, her]
         lexical_class: Minor
         handshape: "1"
@@ -141,6 +147,8 @@ units:
         sign_type: OneHanded
       - gloss: we
         asllex_id: we
+        asllex_code: G_03_019
+        asl_citizen_gloss: WE
         english_lemmas: [we, us]
         lexical_class: Minor
         handshape: "1"
@@ -151,6 +159,8 @@ units:
         sign_type: OneHanded
       - gloss: my
         asllex_id: my
+        asllex_code: C_01_060
+        asl_citizen_gloss: MY
         english_lemmas: [my, mine]
         lexical_class: Minor
         handshape: open_b
@@ -161,6 +171,8 @@ units:
         sign_type: OneHanded
       - gloss: your
         asllex_id: your
+        asllex_code: F_01_052
+        asl_citizen_gloss: YOUR
         english_lemmas: [your, yours]
         lexical_class: Minor
         handshape: "5"
@@ -178,6 +190,8 @@ units:
     signs:
       - gloss: what_1
         asllex_id: what_1
+        asllex_code: D_02_084
+        asl_citizen_gloss: WHAT2
         english_lemmas: [what]
         lexical_class: Minor
         handshape: "5"
@@ -188,6 +202,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: who
         asllex_id: who
+        asllex_code: C_01_041
+        asl_citizen_gloss: WHO
         english_lemmas: [who, whom]
         lexical_class: Minor
         handshape: "l"
@@ -198,6 +214,8 @@ units:
         sign_type: OneHanded
       - gloss: where
         asllex_id: where
+        asllex_code: B_02_035
+        asl_citizen_gloss: WHERE
         english_lemmas: [where]
         lexical_class: Minor
         handshape: "1"
@@ -208,6 +226,8 @@ units:
         sign_type: OneHanded
       - gloss: why
         asllex_id: why
+        asllex_code: D_01_067
+        asl_citizen_gloss: WHY
         english_lemmas: [why]
         lexical_class: Minor
         handshape: "y"
@@ -218,6 +238,8 @@ units:
         sign_type: OneHanded
       - gloss: how
         asllex_id: how
+        asllex_code: F_02_086
+        asl_citizen_gloss: HOW2
         english_lemmas: [how]
         lexical_class: Minor
         handshape: "c"
@@ -235,6 +257,8 @@ units:
     signs:
       - gloss: hello
         asllex_id: hello
+        asllex_code: D_02_055
+        asl_citizen_gloss: HELLO
         english_lemmas: [hello, hi]
         lexical_class: Minor
         handshape: closed_b
@@ -245,6 +269,8 @@ units:
         sign_type: OneHanded
       - gloss: thank_you
         asllex_id: thank_you
+        asllex_code: H_02_053
+        asl_citizen_gloss: THANKYOU
         english_lemmas: [thank, thanks]
         lexical_class: Verb
         verb_class: agreement   # UNVERIFIED
@@ -256,6 +282,8 @@ units:
         sign_type: OneHanded
       - gloss: please
         asllex_id: please
+        asllex_code: B_02_007
+        asl_citizen_gloss: PLEASE
         english_lemmas: [please]
         lexical_class: Adverb
         handshape: open_b
@@ -266,6 +294,8 @@ units:
         sign_type: OneHanded
       - gloss: sorry
         asllex_id: sorry
+        asllex_code: C_01_020
+        asl_citizen_gloss: SORRY
         english_lemmas: [sorry]
         lexical_class: Adjective
         handshape: "a"
@@ -276,6 +306,8 @@ units:
         sign_type: OneHanded
       - gloss: fine_1
         asllex_id: fine_1
+        asllex_code: C_01_043
+        asl_citizen_gloss: FINE1
         english_lemmas: [fine]
         lexical_class: Adjective
         handshape: "5"
@@ -286,6 +318,8 @@ units:
         sign_type: OneHanded
       - gloss: name
         asllex_id: name
+        asllex_code: D_01_021
+        asl_citizen_gloss: NAME
         english_lemmas: [name]
         lexical_class: Noun
         handshape: "h"
@@ -303,6 +337,8 @@ units:
     signs:
       - gloss: "yes"
         asllex_id: "yes"
+        asllex_code: G_03_074
+        asl_citizen_gloss: "YES"
         english_lemmas: ["yes"]
         lexical_class: Minor
         handshape: "s"
@@ -313,6 +349,8 @@ units:
         sign_type: OneHanded
       - gloss: "no"
         asllex_id: "no"
+        asllex_code: C_03_041
+        asl_citizen_gloss: "NO"
         english_lemmas: ["no"]
         lexical_class: Minor
         handshape: flat_h
@@ -323,6 +361,8 @@ units:
         sign_type: OneHanded
       - gloss: ok
         asllex_id: ok
+        asllex_code: F_03_080
+        asl_citizen_gloss: OK
         english_lemmas: [ok, okay]
         lexical_class: Minor
         handshape: "o"
@@ -333,6 +373,8 @@ units:
         sign_type: OneHanded
       - gloss: want_2
         asllex_id: want_2
+        asllex_code: E_01_025
+        asl_citizen_gloss: WANT1
         english_lemmas: [want]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -351,6 +393,8 @@ units:
     signs:
       - gloss: mother
         asllex_id: mother
+        asllex_code: B_02_008
+        asl_citizen_gloss: MOTHER
         english_lemmas: [mother, mom]
         lexical_class: Noun
         handshape: "5"
@@ -361,6 +405,8 @@ units:
         sign_type: OneHanded
       - gloss: father
         asllex_id: father
+        asllex_code: B_01_077
+        asl_citizen_gloss: FATHER
         english_lemmas: [father, dad]
         lexical_class: Noun
         handshape: "5"
@@ -371,6 +417,8 @@ units:
         sign_type: OneHanded
       - gloss: sister
         asllex_id: sister
+        asllex_code: D_03_050
+        asl_citizen_gloss: SISTER
         english_lemmas: [sister]
         lexical_class: Noun
         handshape: "l"
@@ -381,6 +429,8 @@ units:
         sign_type: OneHanded
       - gloss: brother
         asllex_id: brother
+        asllex_code: B_01_065
+        asl_citizen_gloss: BROTHER
         english_lemmas: [brother]
         lexical_class: Noun
         handshape: "a"
@@ -391,6 +441,8 @@ units:
         sign_type: OneHanded
       - gloss: family
         asllex_id: family
+        asllex_code: C_01_025
+        asl_citizen_gloss: FAMILY
         english_lemmas: [family]
         lexical_class: Noun
         handshape: "f"
@@ -401,6 +453,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: baby
         asllex_id: baby
+        asllex_code: C_01_017
+        asl_citizen_gloss: BABY1
         english_lemmas: [baby]
         lexical_class: Noun
         handshape: open_b
@@ -411,6 +465,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: friend
         asllex_id: friend
+        asllex_code: D_03_010
+        asl_citizen_gloss: FRIEND
         english_lemmas: [friend]
         lexical_class: Noun
         handshape: curved_1
@@ -428,6 +484,8 @@ units:
     signs:
       - gloss: eat_1
         asllex_id: eat_1
+        asllex_code: B_02_002
+        asl_citizen_gloss: EAT1
         english_lemmas: [eat]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -439,6 +497,8 @@ units:
         sign_type: OneHanded
       - gloss: drink
         asllex_id: drink
+        asllex_code: B_02_012
+        asl_citizen_gloss: DRINK1
         english_lemmas: [drink]
         lexical_class: Noun
         verb_class: plain   # UNVERIFIED
@@ -450,6 +510,8 @@ units:
         sign_type: OneHanded
       - gloss: sleep
         asllex_id: sleep
+        asllex_code: B_03_037
+        asl_citizen_gloss: SLEEP
         english_lemmas: [sleep]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -461,6 +523,8 @@ units:
         sign_type: OneHanded
       - gloss: work
         asllex_id: work
+        asllex_code: B_03_059
+        asl_citizen_gloss: WORK
         english_lemmas: [work]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -472,6 +536,8 @@ units:
         sign_type: AsymmetricalSameHandshape
       - gloss: go
         asllex_id: go
+        asllex_code: C_03_056
+        asl_citizen_gloss: GO
         english_lemmas: [go]
         lexical_class: Verb
         verb_class: spatial   # UNVERIFIED
@@ -483,6 +549,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: come
         asllex_id: come
+        asllex_code: C_03_074
+        asl_citizen_gloss: COME
         english_lemmas: [come]
         lexical_class: Verb
         verb_class: spatial   # UNVERIFIED
@@ -494,6 +562,8 @@ units:
         sign_type: OneHanded
       - gloss: learn
         asllex_id: learn
+        asllex_code: B_01_042
+        asl_citizen_gloss: LEARN
         english_lemmas: [learn]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -505,6 +575,8 @@ units:
         sign_type: AsymmetricalDifferentHandshape
       - gloss: read
         asllex_id: read
+        asllex_code: A_01_022
+        asl_citizen_gloss: READ
         english_lemmas: [read]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -523,6 +595,8 @@ units:
     signs:
       - gloss: water
         asllex_id: water
+        asllex_code: A_02_031
+        asl_citizen_gloss: WATER
         english_lemmas: [water]
         lexical_class: Noun
         handshape: "w"
@@ -533,6 +607,8 @@ units:
         sign_type: OneHanded
       - gloss: milk
         asllex_id: milk
+        asllex_code: A_01_051
+        asl_citizen_gloss: MILK1
         english_lemmas: [milk]
         lexical_class: Noun
         handshape: "s"
@@ -543,6 +619,8 @@ units:
         sign_type: OneHanded
       - gloss: coffee
         asllex_id: coffee
+        asllex_code: A_01_032
+        asl_citizen_gloss: COFFEE
         english_lemmas: [coffee]
         lexical_class: Noun
         handshape: "s"
@@ -560,6 +638,8 @@ units:
     signs:
       - gloss: happy
         asllex_id: happy
+        asllex_code: C_03_078
+        asl_citizen_gloss: HAPPY
         english_lemmas: [happy]
         lexical_class: Adjective
         handshape: open_b
@@ -570,6 +650,8 @@ units:
         sign_type: OneHanded
       - gloss: sad
         asllex_id: sad
+        asllex_code: B_02_053
+        asl_citizen_gloss: SAD
         english_lemmas: [sad]
         lexical_class: Adjective
         handshape: "5"
@@ -580,6 +662,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: tired
         asllex_id: tired
+        asllex_code: D_02_050
+        asl_citizen_gloss: TIRED
         english_lemmas: [tired]
         lexical_class: Adjective
         handshape: "c"
@@ -590,6 +674,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: hungry
         asllex_id: hungry
+        asllex_code: C_01_010
+        asl_citizen_gloss: HUNGRY
         english_lemmas: [hungry]
         lexical_class: Adjective
         handshape: "c"
@@ -600,6 +686,8 @@ units:
         sign_type: OneHanded
       - gloss: good
         asllex_id: good
+        asllex_code: B_01_052
+        asl_citizen_gloss: GOOD
         english_lemmas: [good]
         lexical_class: Adjective
         handshape: open_b
@@ -610,6 +698,8 @@ units:
         sign_type: OneHanded
       - gloss: love
         asllex_id: love
+        asllex_code: G_01_068
+        asl_citizen_gloss: LOVE
         english_lemmas: [love]
         lexical_class: Verb
         verb_class: plain   # UNVERIFIED
@@ -628,6 +718,8 @@ units:
     signs:
       - gloss: today
         asllex_id: today
+        asllex_code: E_02_006
+        asl_citizen_gloss: TODAY
         english_lemmas: [today]
         lexical_class: Noun
         handshape: "y"
@@ -638,6 +730,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: tomorrow
         asllex_id: tomorrow
+        asllex_code: F_02_040
+        asl_citizen_gloss: TOMORROW
         english_lemmas: [tomorrow]
         lexical_class: Noun
         handshape: "a"
@@ -648,6 +742,8 @@ units:
         sign_type: OneHanded
       - gloss: now
         asllex_id: now
+        asllex_code: C_03_062
+        asl_citizen_gloss: NOW
         english_lemmas: [now]
         lexical_class: Adverb
         handshape: "y"
@@ -658,6 +754,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: time
         asllex_id: time
+        asllex_code: B_02_080
+        asl_citizen_gloss: TIME
         english_lemmas: [time]
         lexical_class: Noun
         handshape: bent_1
@@ -676,6 +774,8 @@ units:
     signs:
       - gloss: red
         asllex_id: red
+        asllex_code: C_02_090
+        asl_citizen_gloss: RED
         english_lemmas: [red]
         lexical_class: Adjective
         handshape: "1"
@@ -686,6 +786,8 @@ units:
         sign_type: OneHanded
       - gloss: blue
         asllex_id: blue
+        asllex_code: C_02_062
+        asl_citizen_gloss: BLUE
         english_lemmas: [blue]
         lexical_class: Adjective
         handshape: closed_b
@@ -696,6 +798,8 @@ units:
         sign_type: OneHanded
       - gloss: green
         asllex_id: green
+        asllex_code: B_02_085
+        asl_citizen_gloss: GREEN
         english_lemmas: [green]
         lexical_class: Adjective
         handshape: "g"
@@ -706,6 +810,8 @@ units:
         sign_type: OneHanded
       - gloss: yellow
         asllex_id: yellow
+        asllex_code: D_01_020
+        asl_citizen_gloss: YELLOW
         english_lemmas: [yellow]
         lexical_class: Adjective
         handshape: "y"
@@ -716,6 +822,8 @@ units:
         sign_type: OneHanded
       - gloss: black
         asllex_id: black
+        asllex_code: B_02_006
+        asl_citizen_gloss: BLACK
         english_lemmas: [black]
         lexical_class: Adjective
         handshape: "1"
@@ -726,6 +834,8 @@ units:
         sign_type: OneHanded
       - gloss: white
         asllex_id: white
+        asllex_code: E_03_046
+        asl_citizen_gloss: WHITE
         english_lemmas: [white]
         lexical_class: Adjective
         handshape: flatspread_5
@@ -743,6 +853,8 @@ units:
     signs:
       - gloss: book
         asllex_id: book
+        asllex_code: A_01_027
+        asl_citizen_gloss: BOOK
         english_lemmas: [book]
         lexical_class: Noun
         handshape: open_b
@@ -753,6 +865,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: car
         asllex_id: car
+        asllex_code: D_02_043
+        asl_citizen_gloss: CAR
         english_lemmas: [car]
         lexical_class: Noun
         handshape: "s"
@@ -763,6 +877,8 @@ units:
         sign_type: SymmetricalOrAlternating
       - gloss: home
         asllex_id: home
+        asllex_code: B_03_063
+        asl_citizen_gloss: HOME
         english_lemmas: [home]
         lexical_class: Adverb
         handshape: "o"
@@ -773,6 +889,8 @@ units:
         sign_type: OneHanded
       - gloss: school
         asllex_id: school
+        asllex_code: C_03_089
+        asl_citizen_gloss: SCHOOL
         english_lemmas: [school]
         lexical_class: Noun
         handshape: "5"
@@ -783,6 +901,8 @@ units:
         sign_type: AsymmetricalSameHandshape
       - gloss: dog
         asllex_id: dog
+        asllex_code: A_01_056
+        asl_citizen_gloss: DOG1
         english_lemmas: [dog]
         lexical_class: Noun
         handshape: "d"
