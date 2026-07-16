@@ -235,8 +235,7 @@ units:
         asllex_id: how
         asllex_code: F_02_086
         asl_citizen_gloss: HOW2
-        variant_auto_selected: true
-        variant_reviewed: false
+        variant_reviewed: true
         variant_candidates:
           - citizen_gloss: HOW2
             asllex_code: F_02_086
@@ -469,8 +468,7 @@ units:
         asllex_id: baby
         asllex_code: C_01_017
         asl_citizen_gloss: BABY1
-        variant_auto_selected: true
-        variant_reviewed: false
+        variant_reviewed: true
         variant_candidates:
           - citizen_gloss: BABY1
             asllex_code: C_01_017
@@ -532,8 +530,7 @@ units:
         asllex_id: drink
         asllex_code: B_02_012
         asl_citizen_gloss: DRINK1
-        variant_auto_selected: true
-        variant_reviewed: false
+        variant_reviewed: true
         variant_candidates:
           - citizen_gloss: DRINK1
             asllex_code: B_02_012
@@ -661,8 +658,7 @@ units:
         asllex_id: milk
         asllex_code: A_01_051
         asl_citizen_gloss: MILK1
-        variant_auto_selected: true
-        variant_reviewed: false
+        variant_reviewed: true
         variant_candidates:
           - citizen_gloss: MILK1
             asllex_code: A_01_051
@@ -974,8 +970,7 @@ units:
         asllex_id: dog
         asllex_code: A_01_056
         asl_citizen_gloss: DOG1
-        variant_auto_selected: true
-        variant_reviewed: false
+        variant_reviewed: true
         variant_candidates:
           - citizen_gloss: DOG1
             asllex_code: A_01_056
