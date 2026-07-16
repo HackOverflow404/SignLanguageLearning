@@ -15,3 +15,6 @@ models/
 
 # Data (large; auto-downloaded into data/ by local_data())
 data/
+
+# Claude Memory
+.claude
