@@ -1,1 +1,17 @@
-.claude
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+
+# Model weights (large; auto-downloaded into models/ by local_model())
+models/
+
+# Data (large; auto-downloaded into data/ by local_data())
+data/
