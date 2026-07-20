@@ -19,6 +19,28 @@ POSE_LM_COUNT = 33
 FACE_LM_COUNT = 478  # 468 face-mesh points + 10 iris points
 HAND_LM_COUNT = 21
 
+# The 52 MediaPipe face-blendshape coefficients, in the fixed order the model
+# emits them (ARKit naming). A Pose's `blendshapes` (52,) vector is aligned to
+# this tuple index-for-index. These carry non-manual grammar (brow raise -> y/n
+# question, brow furrow -> wh-question, mouth morphemes) that geometric face
+# landmarks alone don't make explicit.
+BLENDSHAPE_NAMES = (
+    "_neutral", "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft",
+    "browOuterUpRight", "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
+    "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
+    "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+    "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft", "eyeSquintRight",
+    "eyeWideLeft", "eyeWideRight", "jawForward", "jawLeft", "jawOpen", "jawRight",
+    "mouthClose", "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft",
+    "mouthFrownRight", "mouthFunnel", "mouthLeft", "mouthLowerDownLeft",
+    "mouthLowerDownRight", "mouthPressLeft", "mouthPressRight", "mouthPucker",
+    "mouthRight", "mouthRollLower", "mouthRollUpper", "mouthShrugLower",
+    "mouthShrugUpper", "mouthSmileLeft", "mouthSmileRight", "mouthStretchLeft",
+    "mouthStretchRight", "mouthUpperUpLeft", "mouthUpperUpRight", "noseSneerLeft",
+    "noseSneerRight",
+)
+BLENDSHAPE_COUNT = len(BLENDSHAPE_NAMES)  # 52
+
 # Offsets of each landmark group within the combined keypoint array.
 _POSE_OFFSET = 0
 _FACE_OFFSET = _POSE_OFFSET + POSE_LM_COUNT
@@ -115,6 +137,15 @@ class MediaPipePoseExtractor(Extractor):
     keypoint. Downstream code that thresholds on confidence should not assume
     graded values here.
 
+    Face blendshapes
+    ----------------
+    A detected face also yields a (52,) `Pose.blendshapes` vector -- graded
+    ARKit-style coefficients (see `BLENDSHAPE_NAMES`) capturing facial action
+    (brow raise/furrow, mouth shapes) that the geometric face mesh leaves
+    implicit. This is the non-manual-marker signal MediaPipe is chosen for.
+    It is None when no face is detected (and always None for backends without
+    blendshapes, e.g. DWPose).
+
     Running mode
     ------------
     `running_mode=RunningMode.IMAGE` (default) re-detects every frame with no
@@ -164,6 +195,7 @@ class MediaPipePoseExtractor(Extractor):
             base_options=BaseOptions(model_asset_path=FACE_MODEL_PATH),
             running_mode=mp_mode,
             num_faces=num_faces,
+            output_face_blendshapes=True,  # 52 semantic coeffs for NMM / facial grammar
         )
         hand_options = vision.HandLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
@@ -292,7 +324,18 @@ class MediaPipePoseExtractor(Extractor):
             best_hand_score[offset] = category.score
             _fill_segment(keypoints, scores, offset, landmarks, width, height)
 
-        return Pose(keypoints=keypoints, scores=scores, width=width, height=height)
+        # Face blendshapes: (52,) graded coefficients aligned to BLENDSHAPE_NAMES,
+        # or None when no face was detected this frame.
+        blendshapes = None
+        if has_face and face_result.face_blendshapes:
+            blendshapes = np.array(
+                [c.score for c in face_result.face_blendshapes[0]], dtype=np.float32
+            )
+
+        return Pose(
+            keypoints=keypoints, scores=scores, width=width, height=height,
+            blendshapes=blendshapes,
+        )
 
     def draw(self, frame: np.ndarray, pose: Pose) -> np.ndarray:
         annotated = frame.copy()

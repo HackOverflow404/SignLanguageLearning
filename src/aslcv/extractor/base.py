@@ -55,12 +55,19 @@ class Skeleton:
 
 @dataclass
 class Pose:
-    """A single detected pose. keypoints: (N, 2) pixel coords; scores: (N,) confidence."""
+    """A single detected pose. keypoints: (N, 2) pixel coords; scores: (N,) confidence.
+
+    `blendshapes` is an optional (52,) vector of semantic face coefficients
+    (ARKit-style: brow raise/furrow, mouth morphemes, etc.) — MediaPipe supplies
+    it, geometric backends like DWPose leave it None. It is a separate channel
+    from `scores`, kept for non-manual-marker (facial grammar) features.
+    """
 
     keypoints: np.ndarray
     scores: np.ndarray
     width: int | None = None
     height: int | None = None
+    blendshapes: np.ndarray | None = None
 
     def confident(self, threshold: float = 0.5) -> np.ndarray:
         """Boolean mask of keypoints at or above the confidence threshold."""
