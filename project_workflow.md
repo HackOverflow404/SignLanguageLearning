@@ -75,8 +75,8 @@ Components:
 ## Where things stand
 
 Done: `src/aslcv/pose/{base,coco_wholebody,dwpose,mediapipe}.py` — the swappable
-extractor layer, both backends working (DWPose via rtmlib as default, MediaPipe
-Holistic as alternate), models downloaded locally. Satisfies Phase 2's
+extractor layer, both backends working (MediaPipe Holistic as default, DWPose via
+rtmlib as alternate), models downloaded locally. Satisfies Phase 2's
 perception dependency.
 
 The two small fixes flagged here are complete:
@@ -129,8 +129,9 @@ which defines everything downstream. Running last means building against a guess
   IRB-approved, Deaf-involved, and domain-matched.
 - Build **signer-independent** train/val/test splits — the same signer must never
   appear in two splits, or accuracy inflates and the tool fails on an unseen signer.
-- Run the DWPose extractor over the reference videos once; cache pose sequences as
-  `.npy`. A batch job — run on Colab or overnight on the 4070.
+- Run the pose extractor over the reference videos once; cache raw pose sequences as
+  `.npz` (MediaPipe is the default; also extract with each Phase 3 candidate so the
+  head-to-head has caches ready). A batch job — run on Colab or overnight on the 4070.
 - Join each sign to the ASL-LEX feature vector (handshape [58 classes], major/minor
   location, path movement, flexion, etc.) → per-sign parameter labels for the
   phonological heads.
@@ -162,7 +163,7 @@ so integration problems surface now, not after two months of component polishing
   closest sign + a crude distance score.
 - **Produces:** a runnable end-to-end demo on 20 signs.
 - **Done when:** signing one of the 20 signs into the webcam yields the closest sign
-  name + a distance score, live. Defaults: DWPose, shoulder normalization, DTW.
+  name + a distance score, live. Defaults: MediaPipe, shoulder normalization, DTW.
 
 ### Phase 3 — Benchmarking (now that a system exists to measure)
 
@@ -176,10 +177,10 @@ COCO-WholeBody 133 topology, nothing downstream changes:
 
 | Candidate | Where it comes from |
 |---|---|
-| **DWPose-l** (current default) | `rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288` — already wired |
+| **DWPose-l** | `rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288` — already wired |
 | **RTMW-x** | `rtmw-dw-x-l_simcc-cocktail14_270e-384x288` — already in `models/` |
 | **ViTPose-133** | rtmlib ViTPose wholebody checkpoint |
-| **MediaPipe Holistic** | built; the *face-detail* contender (468 points + blendshapes) |
+| **MediaPipe Holistic** (current default) | built; the *face-detail* contender (468 points + blendshapes) |
 
 **Dropped:** Sapiens, AlphaPose/Halpe, SDPose, SMPLest-X. All are separate
 integrations that won't hit real-time on a laptop 4070. Sapiens specifically
