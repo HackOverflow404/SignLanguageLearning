@@ -15,6 +15,7 @@ import numpy as np
 
 from aslcv.extractor.base import RunningMode
 from aslcv.extractor import dwpose as dw
+from aslcv.extractor import rtmlib_base as rb  # DWPose now subclasses the shared rtmlib base
 
 
 def frame(tag):
@@ -38,8 +39,10 @@ class FakeCustom:
 
 
 def build_dw(running_mode, custom_cls=FakeCustom, **kwargs):
-    with mock.patch.object(dw, "local_model", new=lambda url: "fake.onnx"), \
-         mock.patch.object(dw, "Custom", new=custom_cls):
+    # DWPoseExtractor builds its predictor in RTMLibWholebodyExtractor.__init__,
+    # so patch Custom/local_model where they are resolved: the base module.
+    with mock.patch.object(rb, "local_model", new=lambda url: "fake.onnx"), \
+         mock.patch.object(rb, "Custom", new=custom_cls):
         return dw.DWPoseExtractor(running_mode=running_mode, **kwargs)
 
 

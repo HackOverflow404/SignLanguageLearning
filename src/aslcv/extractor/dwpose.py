@@ -1,154 +1,17 @@
-import threading
-from pathlib import Path
-
-import cv2
-import numpy as np
-from rtmlib import Custom, draw_skeleton  # (removed unused `Wholebody` import)
-from rtmlib.tools.file import download_checkpoint
-
-from .base import Extractor, Pose, RunningMode, Skeleton
-from .coco_wholebody import COCO_WHOLEBODY
-
-# Keep all model weights inside the project. Resolved relative to this file
-# (src/aslcv/extractor/dwpose.py -> project root) so it works wherever the repo lives.
-MODELS_DIR = str(Path(__file__).resolve().parents[3] / "models")
-
-DET_URL = "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_m_8xb8-300e_humanart-c2c7a14a.zip"
-POSE_URL = "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip"
+from .rtmlib_base import RTMLibWholebodyExtractor
 
 
-def local_model(url):
-    return download_checkpoint(url, dst_dir=MODELS_DIR)
+class DWPoseExtractor(RTMLibWholebodyExtractor):
+    """DWPose: YOLOX + RTMPose-l distilled on ucoco (the 2023 classic), producing
+    a 133-keypoint COCO-WholeBody `Pose`.
 
-
-class DWPoseExtractor(Extractor):
-    """DWPose (RTMDet + RTMPose via rtmlib) producing a COCO-WholeBody Pose.
-
-    Running mode
-    ------------
-    rtmlib inference is synchronous and has no native streaming API, so the
-    running modes are realised with the one temporal lever this backend has --
-    detection cadence + reuse of the last pose:
-
-    IMAGE (default) -- detect on every frame, no reuse. Correct for single
-        stills and unordered frames; `process_every_n_frames` is ignored.
-    VIDEO -- ordered offline processing. Runs detection on every
-        `process_every_n_frames`-th frame and returns the cached pose in
-        between, trading temporal resolution for throughput on a file. Blocks
-        while a frame is being processed (fine for batch extraction).
-    LIVE -- a real-time camera. Detection runs on a background thread; `extract`
-        submits the newest frame and returns immediately with the most recently
-        completed pose, dropping any frame that arrives while the worker is
-        busy. This keeps the capture loop at full frame rate; the trade-off is a
-        pose that can lag the current frame. (`process_every_n_frames` is not
-        used in LIVE -- the worker already drops whatever it cannot keep up
-        with.)
+    "DWPose" names the two-stage distillation *training recipe*, not an
+    architecture -- the network is RTMPose-large with a SimCC head, so it loads
+    through rtmlib's `RTMPose` class. See `RTMLibWholebodyExtractor` for the
+    detector, running modes, and the rest of the machinery shared with the other
+    rtmlib whole-body backends.
     """
 
-    def __init__(
-        self,
-        device="cuda",
-        backend="onnxruntime",
-        process_every_n_frames=3,
-        openpose_skeleton=False,
-        kpt_thr=0.43,
-        running_mode: RunningMode = RunningMode.IMAGE,
-    ):
-        super().__init__(running_mode)
-        self.device = device
-        self.backend = backend
-        self.openpose_skeleton = openpose_skeleton
-        self.kpt_thr = kpt_thr
-        self.process_every_n_frames = process_every_n_frames
-        self.frame_idx = 0
-        self._last_pose = None
-
-        self.custom = Custom(
-            to_openpose=False,
-            det_class="YOLOX",
-            det=local_model(DET_URL),
-            det_input_size=(640, 640),
-            pose_class="RTMPose",  # DWPose uses the RTMPose class
-            pose=local_model(POSE_URL),
-            pose_input_size=(288, 384),  # (W, H) for a 384x288 (H×W) model
-            backend=backend,
-            device=device,
-        )
-
-        # LIVE plumbing: a single worker thread runs inference off the capture
-        # loop. `_pending` holds only the newest unprocessed frame (older ones
-        # are dropped); `_pose_lock` guards `_last_pose` shared with `extract`.
-        self._worker = None
-        self._pending = None
-        self._pending_lock = threading.Lock()
-        self._pose_lock = threading.Lock()
-        self._wake = threading.Event()
-        self._stop = threading.Event()
-        if running_mode is RunningMode.LIVE:
-            self._worker = threading.Thread(
-                target=self._live_loop, name="dwpose-live", daemon=True
-            )
-            self._worker.start()
-
-    @property
-    def skeleton(self) -> Skeleton:
-        return COCO_WHOLEBODY
-
-    def _pose_from_frame(self, frame) -> Pose | None:
-        """Run detection on a single frame. Pure w.r.t. shared state."""
-        keypoints, scores = self.custom(frame)  # (P, 133, 2), (P, 133)
-        if keypoints is None or len(keypoints) == 0:
-            return None
-        height, width = frame.shape[:2]
-        best = int(np.argmax(scores.mean(axis=1)))  # squeeze to (133, 2)/(133,)
-        return Pose(keypoints[best], scores[best], width=width, height=height)
-
-    def _live_loop(self):
-        """Background worker: process the newest submitted frame, forever."""
-        while True:
-            self._wake.wait()
-            self._wake.clear()
-            if self._stop.is_set():
-                break
-            with self._pending_lock:
-                frame, self._pending = self._pending, None
-            if frame is None:
-                continue
-            pose = self._pose_from_frame(frame)
-            with self._pose_lock:
-                self._last_pose = pose
-
-    def extract(self, frame) -> Pose | None:
-        if self.running_mode is RunningMode.LIVE:
-            with self._pending_lock:
-                self._pending = frame  # overwrite -> drop stale frames
-            self._wake.set()
-            with self._pose_lock:
-                return self._last_pose
-
-        if self.running_mode is RunningMode.VIDEO:
-            self.frame_idx += 1
-            if self.frame_idx % self.process_every_n_frames != 0:
-                return self._last_pose
-
-        self._last_pose = self._pose_from_frame(frame)
-        return self._last_pose
-
-    def draw(self, frame, pose):
-        if pose is None:
-            return frame
-        return draw_skeleton(
-            frame.copy(),
-            pose.keypoints[None],  # (re-add the person axis draw_skeleton expects)
-            pose.scores[None],
-            openpose_skeleton=self.openpose_skeleton,
-            kpt_thr=self.kpt_thr,
-        )
-
-    def close(self):
-        if self._worker is not None:
-            self._stop.set()
-            self._wake.set()
-            self._worker.join(timeout=2.0)
-            self._worker = None
-        cv2.destroyAllWindows()
+    POSE_CLASS = "RTMPose"
+    POSE_URL = "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip"
+    POSE_INPUT_SIZE = (288, 384)  # (W, H) for a 384x288 (H×W) model
