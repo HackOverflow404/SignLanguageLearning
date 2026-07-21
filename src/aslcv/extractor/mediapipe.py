@@ -2,8 +2,8 @@ import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks.python import vision
 
 from .base import Extractor, Pose, RunningMode, Skeleton
@@ -25,18 +25,57 @@ HAND_LM_COUNT = 21
 # question, brow furrow -> wh-question, mouth morphemes) that geometric face
 # landmarks alone don't make explicit.
 BLENDSHAPE_NAMES = (
-    "_neutral", "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft",
-    "browOuterUpRight", "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
-    "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
-    "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
-    "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft", "eyeSquintRight",
-    "eyeWideLeft", "eyeWideRight", "jawForward", "jawLeft", "jawOpen", "jawRight",
-    "mouthClose", "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft",
-    "mouthFrownRight", "mouthFunnel", "mouthLeft", "mouthLowerDownLeft",
-    "mouthLowerDownRight", "mouthPressLeft", "mouthPressRight", "mouthPucker",
-    "mouthRight", "mouthRollLower", "mouthRollUpper", "mouthShrugLower",
-    "mouthShrugUpper", "mouthSmileLeft", "mouthSmileRight", "mouthStretchLeft",
-    "mouthStretchRight", "mouthUpperUpLeft", "mouthUpperUpRight", "noseSneerLeft",
+    "_neutral",
+    "browDownLeft",
+    "browDownRight",
+    "browInnerUp",
+    "browOuterUpLeft",
+    "browOuterUpRight",
+    "cheekPuff",
+    "cheekSquintLeft",
+    "cheekSquintRight",
+    "eyeBlinkLeft",
+    "eyeBlinkRight",
+    "eyeLookDownLeft",
+    "eyeLookDownRight",
+    "eyeLookInLeft",
+    "eyeLookInRight",
+    "eyeLookOutLeft",
+    "eyeLookOutRight",
+    "eyeLookUpLeft",
+    "eyeLookUpRight",
+    "eyeSquintLeft",
+    "eyeSquintRight",
+    "eyeWideLeft",
+    "eyeWideRight",
+    "jawForward",
+    "jawLeft",
+    "jawOpen",
+    "jawRight",
+    "mouthClose",
+    "mouthDimpleLeft",
+    "mouthDimpleRight",
+    "mouthFrownLeft",
+    "mouthFrownRight",
+    "mouthFunnel",
+    "mouthLeft",
+    "mouthLowerDownLeft",
+    "mouthLowerDownRight",
+    "mouthPressLeft",
+    "mouthPressRight",
+    "mouthPucker",
+    "mouthRight",
+    "mouthRollLower",
+    "mouthRollUpper",
+    "mouthShrugLower",
+    "mouthShrugUpper",
+    "mouthSmileLeft",
+    "mouthSmileRight",
+    "mouthStretchLeft",
+    "mouthStretchRight",
+    "mouthUpperUpLeft",
+    "mouthUpperUpRight",
+    "noseSneerLeft",
     "noseSneerRight",
 )
 BLENDSHAPE_COUNT = len(BLENDSHAPE_NAMES)  # 52
@@ -75,13 +114,20 @@ def _build_skeleton() -> Skeleton:
 
     edges = (
         offset_edges(vision.PoseLandmarksConnections.POSE_LANDMARKS, _POSE_OFFSET)
-        + offset_edges(vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS, _FACE_OFFSET)
-        + offset_edges(vision.HandLandmarksConnections.HAND_CONNECTIONS, _LEFT_HAND_OFFSET)
-        + offset_edges(vision.HandLandmarksConnections.HAND_CONNECTIONS, _RIGHT_HAND_OFFSET)
+        + offset_edges(
+            vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS, _FACE_OFFSET
+        )
+        + offset_edges(
+            vision.HandLandmarksConnections.HAND_CONNECTIONS, _LEFT_HAND_OFFSET
+        )
+        + offset_edges(
+            vision.HandLandmarksConnections.HAND_CONNECTIONS, _RIGHT_HAND_OFFSET
+        )
     )
 
     anchors = tuple(
-        (name, _POSE_OFFSET + landmark) for name, landmark in _POSE_ANCHOR_LANDMARKS.items()
+        (name, _POSE_OFFSET + landmark)
+        for name, landmark in _POSE_ANCHOR_LANDMARKS.items()
     )
 
     return Skeleton(names=tuple(names), edges=tuple(edges), anchors=anchors)
@@ -90,11 +136,28 @@ def _build_skeleton() -> Skeleton:
 MEDIAPIPE_HOLISTIC = _build_skeleton()
 
 
-def _fill_segment(keypoints, scores, offset, landmarks, width, height, use_visibility=False):
+def _fill_segment(
+    keypoints,
+    scores,
+    offset,
+    landmarks,
+    width,
+    height,
+    use_visibility=False,
+    det_score=1.0,
+):
+    """Write one landmark group into the combined arrays.
+
+    Presence is carried by `scores`: undetected groups are never passed here, so
+    they keep the 0.0 the array was initialised with. `det_score` is the group's
+    detection confidence, stored on every point when there is no per-point score
+    (hands: the handedness score; face: 1.0, since the face landmarker exposes
+    none). Pose overrides per point via `use_visibility`.
+    """
     for i, landmark in enumerate(landmarks):
         keypoints[offset + i] = (landmark.x * width, landmark.y * height)
         visibility = landmark.visibility if use_visibility else None
-        scores[offset + i] = visibility if visibility is not None else 1.0
+        scores[offset + i] = visibility if visibility is not None else det_score
 
 
 class MediaPipePoseExtractor(Extractor):
@@ -299,14 +362,23 @@ class MediaPipePoseExtractor(Extractor):
 
         if has_pose:
             _fill_segment(
-                keypoints, scores, _POSE_OFFSET, pose_result.pose_landmarks[0],
-                width, height, use_visibility=True,
+                keypoints,
+                scores,
+                _POSE_OFFSET,
+                pose_result.pose_landmarks[0],
+                width,
+                height,
+                use_visibility=True,
             )
 
         if has_face:
             _fill_segment(
-                keypoints, scores, _FACE_OFFSET, face_result.face_landmarks[0],
-                width, height,
+                keypoints,
+                scores,
+                _FACE_OFFSET,
+                face_result.face_landmarks[0],
+                width,
+                height,
             )
 
         # Two detected hands can report the same handedness (e.g. hands crossing
@@ -322,7 +394,18 @@ class MediaPipePoseExtractor(Extractor):
             if best_hand_score.get(offset, -1.0) >= category.score:
                 continue
             best_hand_score[offset] = category.score
-            _fill_segment(keypoints, scores, offset, landmarks, width, height)
+            # Store the per-hand detection confidence (graded per hand, not per
+            # point) instead of a blind 1.0, so a barely-detected hand reads lower
+            # than a crisp one. Face has no such score and stays 1.0.
+            _fill_segment(
+                keypoints,
+                scores,
+                offset,
+                landmarks,
+                width,
+                height,
+                det_score=category.score,
+            )
 
         # Face blendshapes: (52,) graded coefficients aligned to BLENDSHAPE_NAMES,
         # or None when no face was detected this frame.
@@ -333,15 +416,22 @@ class MediaPipePoseExtractor(Extractor):
             )
 
         return Pose(
-            keypoints=keypoints, scores=scores, width=width, height=height,
+            keypoints=keypoints,
+            scores=scores,
+            width=width,
+            height=height,
             blendshapes=blendshapes,
         )
 
-    def draw(self, frame: np.ndarray, pose: Pose) -> np.ndarray:
+    def draw(self, frame: np.ndarray, pose: Pose, threshold: float = 0.0) -> np.ndarray:
         annotated = frame.copy()
-        # Undetected segments are left zero-filled; a tiny epsilon (not 0.0) excludes them
-        # while still keeping genuinely low-visibility pose landmarks.
-        confident = pose.confident(threshold=1e-6)
+        # Draw a point iff it is present AND at/above `threshold`. Presence is
+        # `score > 0`: undetected groups keep the 0.0 from array init, while every
+        # detected point -- even one landing at pixel (0,0) -- has a positive score
+        # (do NOT test coords==(0,0); a real origin point would be dropped).
+        # `threshold` additionally hides low-visibility pose points; 0.0 shows all
+        # detected points, raise it (e.g. 0.5) to declutter.
+        confident = (pose.scores > 0.0) & pose.confident(threshold)
 
         for start, end in self.skeleton.edges:
             if not (confident[start] and confident[end]):

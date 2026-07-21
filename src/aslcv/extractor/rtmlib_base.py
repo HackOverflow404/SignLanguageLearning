@@ -149,14 +149,21 @@ class RTMLibWholebodyExtractor(Extractor):
                 return self._last_pose
 
         if self.running_mode is RunningMode.VIDEO:
+            # Detect on frame 0, then every n-th. The old `(idx+1) % n` dropped the
+            # first two frames as None -- exactly where a sign's onset lives. With
+            # n==1 (the correct default for OFFLINE extraction) this detects every
+            # frame. n>1 is a live-throughput hack that duplicates real frames into
+            # the cache, which zeroes velocity features -- do not use it for data
+            # you will train on.
+            skip = self.frame_idx % self.process_every_n_frames != 0
             self.frame_idx += 1
-            if self.frame_idx % self.process_every_n_frames != 0:
+            if skip and self._last_pose is not None:
                 return self._last_pose
 
         self._last_pose = self._pose_from_frame(frame)
         return self._last_pose
 
-    def draw(self, frame, pose):
+    def draw(self, frame, pose, threshold: float | None = None):
         if pose is None:
             return frame
         return draw_skeleton(
@@ -164,7 +171,7 @@ class RTMLibWholebodyExtractor(Extractor):
             pose.keypoints[None],  # (re-add the person axis draw_skeleton expects)
             pose.scores[None],
             openpose_skeleton=self.openpose_skeleton,
-            kpt_thr=self.kpt_thr,
+            kpt_thr=self.kpt_thr if threshold is None else threshold,
         )
 
     def close(self):
