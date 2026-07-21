@@ -18,6 +18,24 @@ import numpy as np
 
 from ..extractor.base import Pose, Skeleton
 
+# The cross-topology anchor vocabulary the normalizer relies on: neutral names that
+# every Skeleton must resolve via `Skeleton.anchor()` to its own index. It lives here
+# (not inside any one topology) so it is the single contract; each skeleton maps these
+# names to its own points, and tests/test_anchors.py asserts every skeleton covers
+# every name. The hand anchors give ShoulderNormalizer a per-hand origin
+# (`*_hand_wrist`) and scale reference (`*_hand_wrist` -> `*_hand_middle_mcp`).
+REQUIRED_ANCHORS = (
+    "nose",
+    "left_shoulder",
+    "right_shoulder",
+    "left_hip",
+    "right_hip",
+    "left_hand_wrist",
+    "right_hand_wrist",
+    "left_hand_middle_mcp",
+    "right_hand_middle_mcp",
+)
+
 
 @dataclass
 class NormalizedPose:

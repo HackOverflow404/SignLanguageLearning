@@ -132,8 +132,28 @@ FACE_REGIONS = {
 # Semantic keypoints downstream normalization needs by meaning. Looked up by
 # name so the block offsets above are handled for free.
 
-_ANCHOR_NAMES = ("nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip")
-_ANCHORS = tuple((name, _idx[name]) for name in _ANCHOR_NAMES)
+# Canonical cross-topology anchor NAME -> this skeleton's own point name. Body
+# anchors reuse their point name; the hand anchors use NEUTRAL names (shared with the
+# MediaPipe skeleton; see normalizer.base.REQUIRED_ANCHORS) that map to COCO's joints:
+#   *_hand_wrist       -> *_hand_root       the HAND-block root, NOT the arm-chain
+#                                           "*_wrist" (idx 9/10); the local hand frame
+#                                           normalizes finger points, so its origin
+#                                           must come from the same hand-block estimate.
+#   *_hand_middle_mcp  -> *_middle_finger1  base knuckle (MCP); COCO numbers finger
+#                                           joints 1..4 from the base, so *_finger1 is
+#                                           the MCP -- verified by tests/test_anchors.py.
+_ANCHOR_TO_POINT = {
+    "nose": "nose",
+    "left_shoulder": "left_shoulder",
+    "right_shoulder": "right_shoulder",
+    "left_hip": "left_hip",
+    "right_hip": "right_hip",
+    "left_hand_wrist": "left_hand_root",
+    "right_hand_wrist": "right_hand_root",
+    "left_hand_middle_mcp": "left_middle_finger1",
+    "right_hand_middle_mcp": "right_middle_finger1",
+}
+_ANCHORS = tuple((anchor, _idx[point]) for anchor, point in _ANCHOR_TO_POINT.items())
 
 # --- the public artifact ----------------------------------------------------
 

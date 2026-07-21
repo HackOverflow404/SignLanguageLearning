@@ -125,9 +125,18 @@ def _build_skeleton() -> Skeleton:
         )
     )
 
+    # Pose anchors + per-hand anchors. MediaPipe hand landmarks (BlazeHand) index
+    # the wrist at 0 and the middle-finger MCP (base knuckle) at 9. These use the
+    # same NEUTRAL names as the COCO skeleton (normalizer.base.REQUIRED_ANCHORS) so
+    # one normalizer serves both topologies; here they map to the hand block's points.
     anchors = tuple(
         (name, _POSE_OFFSET + landmark)
         for name, landmark in _POSE_ANCHOR_LANDMARKS.items()
+    ) + (
+        ("left_hand_wrist", _LEFT_HAND_OFFSET + 0),
+        ("left_hand_middle_mcp", _LEFT_HAND_OFFSET + 9),
+        ("right_hand_wrist", _RIGHT_HAND_OFFSET + 0),
+        ("right_hand_middle_mcp", _RIGHT_HAND_OFFSET + 9),
     )
 
     return Skeleton(names=tuple(names), edges=tuple(edges), anchors=anchors)
