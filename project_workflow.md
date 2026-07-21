@@ -3,6 +3,16 @@
 The definitive plan. Supersedes the older workflow (which described a
 MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 
+> **Rev note (this pass):** synced Phase 3 to reality (all four extractors built and
+> cached, MediaPipe is the default — earlier text still called DWPose the default and
+> RTMW/ViTPose "URL swaps to do"). Added the full Phase 2 normalization/feature design
+> (two files: `ShoulderNormalizer` with global + local-hand frames, and a `features.py`
+> assembly pipeline; BBox dropped as unsound rather than built). Hardened Phase 4
+> (embedding+distance not classification; multi-morphemic signs excluded from
+> parameter feedback). One open reconciliation: this pass's manifest count is 1,874
+> clips (895/229/750) — authoritative from the built pipeline — vs an earlier ~1,706
+> estimate made before the ambiguous variants (dog/baby/drink/how/milk) were resolved.
+
 ## Terminology
 
 - **Gloss / ID-gloss** — the canonical written label for a sign (STORE, YESTERDAY).
@@ -74,29 +84,44 @@ Components:
 
 ## Where things stand
 
-Done: `src/aslcv/pose/{base,coco_wholebody,dwpose,mediapipe}.py` — the swappable
-extractor layer, both backends working (MediaPipe Holistic as default, DWPose via
-rtmlib as alternate), models downloaded locally. Satisfies Phase 2's
-perception dependency.
+**Extractor layer** (`src/aslcv/extractor/`, renamed from `pose/`) — DONE. Four
+swappable backends behind one `Extractor`/`Skeleton`/`Pose` interface:
+**MediaPipe Holistic** (default; 553 kpts + 52 face blendshapes for NMM), **DWPose**,
+**RTMW-x**, and **ViTPose-l** (the latter three share `rtmlib_base.py`, all
+COCO-WholeBody 133). Models local. `Pose` carries width/height + an optional
+blendshapes channel; `Skeleton` exposes named anchors (nose, left/right
+shoulder/hip) so normalization reads indices by meaning, not by hard-coded topology
+(COCO-WholeBody shoulders = 5, 6; MediaPipe pose = 11, 12).
 
-The two small fixes flagged here are complete:
-1. `Pose` construction is consistent — `DWPoseExtractor` now sets `width`/`height`
-   like `MediaPipePoseExtractor`, so the feature layer can rely on both fields.
-2. `Skeleton` carries named anchor indices via `anchor(name) -> index`, so
-   normalization reads shoulder/hip/nose indices by meaning instead of hard-coding
-   a topology. Both backends expose the same anchor vocabulary — nose, left/right
-   shoulder, left/right hip (COCO-WholeBody shoulders = 5, 6; MediaPipe pose = 11, 12).
+**Phase 0** (curriculum scope) — DONE. `curriculum.yaml`: 60 signs + teaching order
++ contrastive pairs + v2 constructions, each resolved to a stable `asllex_code` and
+ASL Citizen gloss.
 
-Phase 0 (curriculum scope) is complete — `curriculum.yaml` holds 60 starter
-signs, teaching order, contrastive minimal pairs, and v2 constructions.
+**Phase 1** (reference library) — DONE; the done-when test (`tests/test_dataset.py`)
+passes:
+- ASL-LEX 2.0 and ASL Citizen (~84k videos) downloaded under `data/`.
+- `data/manifest.csv` (`tools/build_manifest.py`): curriculum filtered onto ASL
+  Citizen's official signer-independent splits — 1,874 clips, 895/229/750
+  train/val/test, zero signer overlap.
+- All four extractors run over the manifest and cached as raw per-clip `.npz` in
+  `data/cache/{extractor}/` (`scripts/extract_landmarks.py`), integrity-verified
+  after several mid-run crashes (`scripts/verify_cache.py`).
+- `data/phonology.csv` (`tools/join_phonology.py`): every ASL-LEX phonology +
+  frequency parameter joined onto the 60 signs by `asllex_code`; 6 multi-morphemic
+  signs flagged (ASL-LEX codes only their first morpheme).
+- `src/aslcv/dataset.py`: yields `(pose_sequence, id_gloss, phonological_features,
+  signer_id)` per split, plus a lazy-torch fixed-length Dataset + label encoder.
 
-Reference data (Phase 1):
-- **ASL-LEX 2.0** — downloaded and unzipped at `data/ASL_LEX/`.
-- **ASL Citizen** — download in progress; not yet extracted. Blocks Phase 1 and Phase 5a.
+**Phase 5b** (production track) — gloss rule engine built
+(`src/aslcv/production/gloss_rules.py`) with its regression test; no data dependency.
 
-Underway: Phase 5b's gloss rule engine (`src/aslcv/production/`), buildable now
-against `curriculum.yaml` with no data dependency. Next after the data lands: the
-Phase 2 vertical slice.
+**Next: Phase 2** — the thin vertical slice, on the 20-sign subset below:
+`normalizer/shoulder.py` (shoulder-global + optional local-hand frames) and
+`features.py` (selection → normalize → confidence → concat → velocity → stack →
+standardize) → DTW nearest-reference grader → live webcam demo. The mother/father
+minimal pair is the first real test. Requires installing **torch** (the loader is
+torch-free; training + the Dataset wrapper are not). Only `ShoulderNormalizer` is
+being built — BBox is skipped as unsound, not stubbed (see Phase 2/3).
 
 ---
 
@@ -148,22 +173,76 @@ which defines everything downstream. Running last means building against a guess
 Build the crappy version that works end to end on ~20 signs with sensible defaults,
 so integration problems surface now, not after two months of component polishing.
 
-- **`features.py`** on the `Pose`/`Skeleton` abstraction: normalized per-frame
-  vector — shoulder-anchored (origin = shoulder midpoint, scale = shoulder width,
-  read anchor indices from the `Skeleton`), drop legs/feet, keep upper body + both
-  hands (+ optional face), append per-keypoint confidence. Add the invariance
-  self-test (translate + scale a synthetic pose → identical vector).
-- **`dataset.py`**: load cached sequences, pad/crop to fixed length, expose the
-  signer-independent split.
-- **A minimal grader**: start with nearest-reference by DTW distance over the
-  20 signs — no training required — to prove the loop. (A small LSTM classifier is
-  an optional sanity check, but the real system is distance-based, so lead with the
-  distance grader.)
-- **A live loop**: webcam → extract → normalize → compare to references → show the
-  closest sign + a crude distance score.
+**The 20-sign slice** — chosen for phonological spread (all 5 major locations,
+~14 distinct handshapes, varied movement), all single-morpheme (the 6
+multi-morphemic signs are excluded so parameter-level checks stay clean), and each
+has ≥13 training clips. The canonical list lives in `curriculum.yaml` as
+`phase2_slice` (checked by `tools/validate_curriculum.py`); this table mirrors it:
+
+| Major location | Signs (handshape) |
+|---|---|
+| Neutral | you (1), what_1 (5), yes (s), dog (d), green (g) |
+| Body    | me (1), please (open_b), tired (c), fine_1 (5) |
+| Hand    | name (h), read (v), coffee (s) |
+| Head    | who (l), why (y), red (1), eat_1 (o), water (w), **mother (5)**, **father (5)** |
+| Arm     | time (bent_1) |
+
+`mother`/`father` are a built-in minimal pair (same handshape + movement, differ
+only in minor location — forehead vs chin): the first test of whether the features
++ DTW grader catch a single-parameter difference.
+
+**`normalizer/` and `features.py` are two responsibilities, kept as two files.**
+Normalization is the *swappable* strategy the Phase 3 grid ablates; feature
+assembly is stable across the grid. Split them so swapping a normalizer is a
+one-line injection and the assembly code never moves (same precedent as the
+swappable `extractor/` backends).
+
+- **`normalizer/shoulder.py`** — a `ShoulderNormalizer` strategy taking a `Pose` +
+  `Skeleton`. Two reference frames, because a sign is two questions at once
+  (*where* is the hand vs *what shape* is the hand), and they want different frames:
+  - **global block** — origin = shoulder midpoint, scale = shoulder width, applied
+    to body + arms + hand *positions*. Carries location and movement. (Anchor
+    indices read from `Skeleton.anchor()`, so it's topology-agnostic across the four
+    extractors.)
+  - **local-hand block** (toggleable) — each hand re-normalized in its own frame
+    (origin = wrist, scale = wrist-to-middle-knuckle distance, *not* a hand bbox),
+    so handshape is described at full resolution independent of where the hand is.
+  - Translation- and scale-invariant, deliberately **not** rotation-invariant — a
+    tilted head is grammatical and must be preserved.
+- **`features.py`** — the assembly pipeline over the normalized blocks:
+  1. **keypoint selection** — keep both hands + upper-body pose (+ face only if NMM
+     is on); drop legs/feet. A modeling choice tuned here, never re-extracted.
+  2. **normalization** — call the injected normalizer per block.
+  3. **confidence handling** — zero/flag points below `conf_thr`; append the
+     confidence as an extra channel; a missing hand → zero block + presence flag.
+     (Note: DWPose gives graded confidence; MediaPipe hands/face are hard-coded 1.0,
+     so this channel is continuous for one backend and binary for the other —
+     account for it in the Phase 3 comparison.)
+  4. **block concatenation** — `[ body | L-hand | R-hand | face? ]` into one vector,
+     preserving slice boundaries so the Phase 4 handshape head reads the hand slice
+     and the location head reads the body slice.
+  5. **velocity deltas** (toggleable, near-default) — append per-keypoint change
+     from the previous frame; movement is a phonological parameter, so hand it to
+     the model explicitly.
+  6. **sequence stacking** — pile per-frame vectors into `(T, F)`; pad/crop (or
+     resample) to a fixed length. DTW is exempt — it handles variable length.
+  7. **standardization** (toggleable) — per-feature mean/std computed on **train
+     only**, applied to val/test (never fit on val/test — that leaks).
+  - Invariance self-test: translate + scale a synthetic pose → identical global
+    block; the local-hand block is unchanged by where the hand sits in frame.
+- **A minimal grader**: nearest-reference by DTW distance over the 20 signs — no
+  training required — to prove the loop. (A small LSTM classifier is an optional
+  sanity check, but the real system is distance-based, so lead with the distance
+  grader.)
+- **A live loop**: webcam → extract → normalize → assemble features → compare to
+  references → show the closest sign + a crude distance score.
 - **Produces:** a runnable end-to-end demo on 20 signs.
 - **Done when:** signing one of the 20 signs into the webcam yields the closest sign
-  name + a distance score, live. Defaults: MediaPipe, shoulder normalization, DTW.
+  name + a distance score, live, and the mother/father minimal pair is
+  distinguished. Defaults: MediaPipe, shoulder-global + local-hand normalization, DTW.
+
+*(`dataset.py` is already built in Phase 1 — the loader, fixed-length wrapper, and
+label encoder exist; Phase 2 consumes it rather than rebuilding it.)*
 
 ### Phase 3 — Benchmarking (now that a system exists to measure)
 
@@ -171,16 +250,21 @@ so integration problems surface now, not after two months of component polishing
 extractor, so anything that can't run real-time on the 4070 is disqualified as the
 live extractor regardless of its accuracy.
 
-**Candidates — four, all cheap.** DWPose-l and MediaPipe Holistic are built. RTMW-x
-and ViTPose-133 are one-line URL swaps in the rtmlib `Custom` config — same
-COCO-WholeBody 133 topology, nothing downstream changes:
+**Candidates — four, all built.** MediaPipe Holistic (current default), DWPose-l,
+RTMW-x, and ViTPose-l are all wired behind the `Extractor` interface; the three
+rtmlib backends share `rtmlib_base.py` and the same COCO-WholeBody 133 topology,
+so nothing downstream changes when swapping among them. All four are already
+cached over the manifest (Phase 1), so the head-to-head is ready to run:
 
-| Candidate | Where it comes from |
-|---|---|
-| **DWPose-l** | `rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288` — already wired |
-| **RTMW-x** | `rtmw-dw-x-l_simcc-cocktail14_270e-384x288` — already in `models/` |
-| **ViTPose-133** | rtmlib ViTPose wholebody checkpoint |
-| **MediaPipe Holistic** (current default) | built; the *face-detail* contender (468 points + blendshapes) |
+| Candidate | Model | Notes |
+|---|---|---|
+| **MediaPipe Holistic** (current default) | 553 kpts + blendshapes | the *face-detail* / NMM contender |
+| **DWPose-l** | `rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288` | RTMPose-large + DW distillation |
+| **RTMW-x** | `rtmw-dw-x-l_simcc-cocktail14_270e-384x288` | newer arch; use 384×288 for hand detail |
+| **ViTPose-l** | rtmlib ViTPose wholebody (133) | accuracy leader in the family |
+
+All four are built and cached; the head-to-head is a matter of running the screens
+below, not new integration.
 
 **Dropped:** Sapiens, AlphaPose/Halpe, SDPose, SMPLest-X. All are separate
 integrations that won't hit real-time on a laptop 4070. Sapiens specifically
@@ -215,9 +299,14 @@ including hands-crossing and hands-near-frame-edge. Real-time failures are out.
 **Accuracy comparison (needs Phase 2 + labels — do not run early):** extract ASL
 Citizen with each survivor, train the same model, compare signer-independent accuracy.
 
-**Normalizer ablation (an afternoon, not a phase):** shoulder-width vs bounding
-box. Expect bbox to lose — the box grows when the hands raise, making normalization
-sign-dependent and corrupting the location signal.
+**Normalizer ablation (an afternoon, not a phase):** the real grid is a small set
+of toggles on the shoulder-anchored scheme (see Phase 2's normalization design):
+local-hand block on/off, velocity deltas on/off, train-set standardization on/off.
+BBox normalization is *not* a serious contender — the box grows when the hands
+raise, making the scale sign-dependent and corrupting the location signal — so it's
+skipped rather than built. Expected winner: shoulder-global + local-hand + velocity
++ standardization, since 40 of the 64 minimal pairs are handshape pairs that the
+local-hand block sharpens.
 
 **Architectures:** LSTM → Transformer → ST-GCN; compare on the data.
 
@@ -233,14 +322,24 @@ sign-dependent and corrupting the location signal.
 
 The instructor's eye. Not a classifier.
 
-- A model over the pose sequence with multiple heads: a **sign embedding** (for
-  nearest-reference distance / dictionary retrieval) plus **phonological feature
-  heads** (handshape, location, movement, orientation) trained on the ASL-LEX labels
-  from Phase 1.
+- **Embedding + distance, never argmax classification.** A learner's attempt is
+  often not any valid sign, and an N-way classifier would confidently mislabel it.
+  So the model learns a **sign embedding** graded by distance to the target's
+  reference (the same framing ASL Citizen itself uses — dictionary retrieval,
+  recall@k), which degrades gracefully on malformed input.
+- **Phonological feature heads** (handshape, location, movement, orientation)
+  trained on the ASL-LEX labels from Phase 1, so feedback degrades *informatively*
+  ("handshape right, location wrong"). Read the block slices from `features.py`
+  accordingly — handshape head off the local-hand slice, location head off the
+  global slice.
 - **DTW alignment** between the learner's attempt and the target reference sequence
   for timing/fidelity.
 - Collect a small set of deliberately wrong attempts to calibrate the "how wrong,
   along which parameter" thresholds (the data task everyone skips).
+- **Exclude the 6 multi-morphemic signs from parameter-level feedback** (or annotate
+  their full form): ASL-LEX codes only their first morpheme, so a parameter head
+  would diagnose the whole sign against a partial label. `join_phonology.py` already
+  flags them.
 - **Produces:** given `(attempt, target_sign)` → per-parameter correctness + overall
   fidelity + which parameters are off.
 - **Done when:** a malformed attempt yields a specific diagnosis ("handshape right,
@@ -412,21 +511,25 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
 ## File map (target)
 
     src/aslcv/
-      pose/            # DONE — extractor layer
-      features.py      # Phase 2 — normalized feature vector
-      dataset.py       # Phase 2 — cached-sequence loader + splits
+      extractor/       # DONE — 4 backends (mediapipe/dwpose/rtmw/vitpose) + rtmlib_base
+      dataset.py       # DONE — cached-sequence loader + splits + label encoder
+      features.py      # Phase 2 — feature assembly (select/concat/confidence/velocity/stack/standardize)
+      normalizer/      # Phase 2 — ShoulderNormalizer (global + local-hand); BBox skipped as unsound
       grading/         # Phase 4 — embedding + phonological heads + DTW
       production/      # Phase 5
-        retrieval.py   #   5a — id_gloss → reference clip + pose sequence
-        gloss.py       #   5b — GlossSequence interface + spaCy pipeline
+        gloss_rules.py #   5b — gloss + NMM rule engine (BUILT)
+        retrieval.py   #   5a — id_gloss → reference clip + pose sequence (later)
         rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data)
         lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags
         templates/     #   5c — correct-by-construction generation (later)
       learner/         # Phase 6 — learner model + adaptive engine
       generator/       # Phase 6 — drills, contrastive pairs, sentence prompts
+    scripts/           # DONE — extract_landmarks.py (extract), verify_cache.py (integrity)
+    tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
     app/               # Phase 6 — the loop, feedback presenter (LLM English only)
     tests/
       golden/          # 5b — (English → expected gloss + NMM) regression corpus
-    data/
+    data/              # gitignored
       ASL_LEX/         # DONE — phonological features + ID-gloss keys
-      asl_citizen/     # Phase 1 — video + cached pose sequences
+      ASL_Citizen/     # DONE — videos + official splits
+      manifest.csv, phonology.csv, cache/{extractor}/*.npz   # DONE — Phase 1 outputs

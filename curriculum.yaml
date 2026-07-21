@@ -92,6 +92,34 @@ parameter_space:
   movement: [Straight, Curved, Circular, None, BackAndForth, Z-shaped, X-shaped, Other]
   handshapes_in_curriculum: ["1", "5", "a", bent_1, "c", closed_b, curved_1, "d", "f", flat_h, flatspread_5, "g", "h", "l", "o", open_b, "s", "v", "w", "y"]
 
+# Phase 2 thin-vertical-slice vocabulary (see project_workflow.md, "Phase 2").
+# A 20-sign subset for the end-to-end MVP: phonological spread across all 5 major
+# locations, ~14 distinct handshapes and varied movement, all single-morpheme,
+# each with >=13 training clips. Referenced by gloss (like contrastive_pairs) and
+# checked by tools/validate_curriculum.py. mother/father is the built-in minimal
+# pair (differ only in minor location).
+phase2_slice:
+  - you        # Neutral
+  - what_1     # Neutral
+  - "yes"      # Neutral  (quoted: bare `yes` is a YAML bool)
+  - dog        # Neutral
+  - green      # Neutral
+  - me         # Body
+  - please     # Body
+  - tired      # Body
+  - fine_1     # Body
+  - name       # Hand
+  - read       # Hand
+  - coffee     # Hand
+  - who        # Head
+  - why        # Head
+  - red        # Head
+  - eat_1      # Head
+  - water      # Head
+  - mother     # Head  (minimal pair with father)
+  - father     # Head  (minimal pair with mother)
+  - time       # Arm
+
 # Introduction order (an UNLOCK GRAPH, not a fixed lesson path). A unit's signs
 # become available for practice once the preceding units are unlocked; the Phase 6
 # adaptive engine still chooses WHAT to drill among unlocked material, from the

@@ -12,6 +12,7 @@ Checks the invariants that hand-editing breaks:
   * every sign carries english_lemmas (the 5b lexicon depends on it)
   * every sign carries an asllex_code, codes are unique, and each one resolves
     in the ASL Citizen splits (the join key from tools/resolve_keys.py)
+  * phase2_slice glosses (the MVP subset) resolve to real signs and are unique
 
 Run after ANY vocabulary change, and paste the regenerated blocks back in.
 """
@@ -206,6 +207,16 @@ def main() -> int:
         if len(plist) <= 1:
             warnings.append(f"only {len(plist)} minimal pair(s) for '{f}' -- thin "
                             f"drill material for that parameter")
+
+    # --- Phase 2 slice ----------------------------------------------------
+    # The MVP vocabulary subset (project_workflow.md, Phase 2), by gloss.
+    slice_glosses = [str(g) for g in (d.get("phase2_slice") or [])]
+    for g in slice_glosses:
+        if g not in by_gloss:
+            errors.append(f"phase2_slice references unknown gloss {g!r}")
+    dup_slice = [g for g, n in Counter(slice_glosses).items() if n > 1]
+    if dup_slice:
+        errors.append(f"phase2_slice has duplicate glosses: {dup_slice}")
 
     # --- construction examples --------------------------------------------
     ids = {g.upper() for g in glosses}
