@@ -3,15 +3,47 @@
 The definitive plan. Supersedes the older workflow (which described a
 MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 
-> **Rev note (this pass):** synced Phase 3 to reality (all four extractors built and
-> cached, MediaPipe is the default — earlier text still called DWPose the default and
-> RTMW/ViTPose "URL swaps to do"). Added the full Phase 2 normalization/feature design
-> (two files: `ShoulderNormalizer` with global + local-hand frames, and a `features.py`
-> assembly pipeline; BBox dropped as unsound rather than built). Hardened Phase 4
-> (embedding+distance not classification; multi-morphemic signs excluded from
-> parameter feedback). One open reconciliation: this pass's manifest count is 1,874
-> clips (895/229/750) — authoritative from the built pipeline — vs an earlier ~1,706
-> estimate made before the ambiguous variants (dog/baby/drink/how/milk) were resolved.
+> **Rev note (this pass):** Phase 2 is DONE **and its post-milestone experiment
+> sweep is done too** — so the headline number has moved well past the 32.5% first
+> recorded. Current best on the 20-sign val split (held-out signers, training-free
+> DTW, still a floor not a target): **MediaPipe 66.2% top-1 / 95.0% top-5** with
+> rest-frame trimming on; 48.8% / 80.0% without trim; DWPose 32.5% / 70.0%. The four
+> experiments that produced this — and, more importantly, told us *which* levers
+> carry signal — are summarized in "Phase 2 — post-milestone findings" below. The
+> short version:
+> - **MediaPipe genuinely beats the three rtmlib backends** on minimal-pair
+>   separation (father/mother 11–15% confusion vs 36–41%), and the edge is *real
+>   keypoint quality*, not an artifact — ~90% of it survives binarizing the
+>   confidence channel, and it survived both the cache-integrity scare and a
+>   face-region-asymmetry fix.
+> - **Rest-frame trimming is the single biggest lever (+17.4pp top-1)** — ASL
+>   Citizen clips are recorded rest→sign→rest, and DTW's length normalization was
+>   letting the shared rest regions compress every distance. BUT it only helps
+>   MediaPipe: MediaPipe runs VIDEO mode (temporal smoothing → true rest reads as
+>   still), the rtmlib backends run IMAGE mode (per-frame jitter → rest never trims).
+>   So the 66-vs-32 gap now *conflates backend quality with running mode* — see the
+>   confound note in Phase 3.
+> - **Depth proxies (apparent hand size / arm foreshortening) did NOT help** the one
+>   pair they targeted (me/you, ~45% confusion either way): the raw signal doesn't
+>   separate that pair, and me/you are indexical/deictic signs that are out of scope
+>   anyway. True z is now a *motivated* Phase 3 ablation rather than a hunch, but
+>   likely not worth re-extraction for one out-of-scope pair.
+> - **`repeated` is the hardest phonological parameter** (38–54% confusion in every
+>   backend's own column) — the one parameter-ranking claim the data supports, and a
+>   direct instruction for Phase 4 (it's a *temporal* property DTW length-normalizes
+>   away; needs an explicit tempo/periodicity feature).
+> - Cache-integrity scare resolved (rtmlib only ever ran IMAGE mode; confirmed clean
+>   across all 1,874 clips × 4 extractors — no re-extraction). `Skeleton` gained a
+>   `regions` field (meaning-based group selection); legs/feet dropped by default;
+>   velocity zeroes deltas across presence gaps; a shared `pipeline_config.py` now
+>   builds every script's pipeline identically; extraction provenance is recorded in
+>   each `.npz`; the rtmlib `process_every_n_frames` default is 1 with a hard-error
+>   guard against the VIDEO+n>1 combination. Full suite: **84/84 green**, `make test`.
+>
+> **Next is Phase 4** (the learned grader), not Phase 3. The Phase-3 sweep's core
+> question — which extractor — is effectively answered (MediaPipe), so Phase 3
+> narrows to a couple of specific, cheap ablations noted in its section rather than a
+> full grid. See "Phase 3 — status" below.
 
 ## Terminology
 
@@ -91,7 +123,10 @@ swappable backends behind one `Extractor`/`Skeleton`/`Pose` interface:
 COCO-WholeBody 133). Models local. `Pose` carries width/height + an optional
 blendshapes channel; `Skeleton` exposes named anchors (nose, left/right
 shoulder/hip) so normalization reads indices by meaning, not by hard-coded topology
-(COCO-WholeBody shoulders = 5, 6; MediaPipe pose = 11, 12).
+(COCO-WholeBody shoulders = 5, 6; MediaPipe pose = 11, 12) — plus named **regions**
+(one level up: `body_upper`, `arms`, `left_hand`, `right_hand`, `face`, `legs_feet`),
+so keypoint *groups* are also selected by meaning across topologies, not by
+name-prefix matching or hardcoded ranges.
 
 **Phase 0** (curriculum scope) — DONE. `curriculum.yaml`: 60 signs + teaching order
 + contrastive pairs + v2 constructions, each resolved to a stable `asllex_code` and
@@ -105,7 +140,12 @@ passes:
   train/val/test, zero signer overlap.
 - All four extractors run over the manifest and cached as raw per-clip `.npz` in
   `data/cache/{extractor}/` (`scripts/extract_landmarks.py`), integrity-verified
-  after several mid-run crashes (`scripts/verify_cache.py`).
+  after several mid-run crashes (`scripts/verify_cache.py`). A later scare — a
+  VIDEO-mode bug in `rtmlib_base.py` that could duplicate frames and drop a clip's
+  opening frames if `process_every_n_frames != 1` — was investigated and resolved:
+  the three rtmlib backends have only ever been extracted in IMAGE mode (which
+  ignores that setting entirely), confirmed empirically across all 1,874 clips × 4
+  extractors. No corruption, no re-extraction needed.
 - `data/phonology.csv` (`tools/join_phonology.py`): every ASL-LEX phonology +
   frequency parameter joined onto the 60 signs by `asllex_code`; 6 multi-morphemic
   signs flagged (ASL-LEX codes only their first morpheme).
@@ -115,13 +155,19 @@ passes:
 **Phase 5b** (production track) — gloss rule engine built
 (`src/aslcv/production/gloss_rules.py`) with its regression test; no data dependency.
 
-**Next: Phase 2** — the thin vertical slice, on the 20-sign subset below:
-`normalizer/shoulder.py` (shoulder-global + optional local-hand frames) and
-`features.py` (selection → normalize → confidence → concat → velocity → stack →
-standardize) → DTW nearest-reference grader → live webcam demo. The mother/father
-minimal pair is the first real test. Requires installing **torch** (the loader is
-torch-free; training + the Dataset wrapper are not). Only `ShoulderNormalizer` is
-being built — BBox is skipped as unsound, not stubbed (see Phase 2/3).
+**Phase 2** (thin vertical slice, on the 20-sign subset below) — DONE, plus a full
+post-milestone experiment sweep. `normalizer/shoulder.py`, `features.py`, a DTW
+nearest-reference grader, and a live webcam demo are all built; a shared
+`pipeline_config.py` builds every script's feature pipeline identically.
+Current best on the 20-sign val split (held-out signers, training-free DTW = a floor,
+not a target): **MediaPipe 66.2% top-1 / 95.0% top-5** with rest-frame trimming;
+48.8% / 80.0% without; DWPose 32.5% / 70.0%. Findings from the sweep — extractor
+comparison, rest-frame trimming, depth proxies, the `repeated` parameter — are in
+"Phase 2 — post-milestone findings" below.
+
+**Next: Phase 4** — the learned grader (embedding + phonological heads). Phase 3's
+central question (which extractor) is effectively settled — MediaPipe — so Phase 3
+shrinks to two specific cheap ablations rather than a full grid (see Phase 3 status).
 
 ---
 
@@ -168,7 +214,7 @@ which defines everything downstream. Running last means building against a guess
 - **Done when:** for any curriculum sign the reference pose sequences and
   phonological labels load, with clean signer-independent splits.
 
-### Phase 2 — Thin vertical slice (MILESTONE — before any benchmarking)
+### Phase 2 — Thin vertical slice (MILESTONE — before any benchmarking) — DONE
 
 Build the crappy version that works end to end on ~20 signs with sensible defaults,
 so integration problems surface now, not after two months of component polishing.
@@ -189,7 +235,29 @@ has ≥13 training clips. The canonical list lives in `curriculum.yaml` as
 
 `mother`/`father` are a built-in minimal pair (same handshape + movement, differ
 only in minor location — forehead vs chin): the first test of whether the features
-+ DTW grader catch a single-parameter difference.
++ DTW grader catch a single-parameter difference. **Result, generalized beyond this
+one pair** (`scripts/eval_minimal_pairs.py`, all four extractors, train+val+test
+pooled with train clips graded leave-one-out — 269 query clips, not 3): the earlier
+mother/father verdicts that looked *contradictory* across backends (dwpose said
+father leaks into mother 2/3 of the time; the mediapipe live-demo selftest said the
+contrast held) were pointing at a **real** effect, just overstated by a 3-clip
+sample — the actual confusion rate is 11% for mediapipe vs 36–41% for the three
+rtmlib backends. That gap holds across *every* in-slice minimal pair tested, not
+just this one: mediapipe is consistently, sometimes dramatically, better separated
+than dwpose/rtmw/vitpose. Pooled across extractors, none of the three parameters
+with in-slice pairs is cleanly resolved by training-free DTW geometry — handshape
+37%, minor_location 32%, major_location 30% confusion — so Phase 4's phonological
+heads need to target all three, handshape hardest. `movement` and `repeated` have
+zero in-slice minimal pairs in this 20-sign slice and could not be evaluated here.
+**Caveat on the vitpose column specifically:** its topology was unverified when
+these numbers first ran (`vitpose.py`'s own docstring flagged the 133-keypoint
+index order as unconfirmed). `scripts/verify_vitpose_topology.py` has since checked
+it against dwpose on the same clips — same-index correspondence beats every
+left/right-swap test, so the topology is correct, not scrambled. But vitpose's
+POSE_INPUT_SIZE is `(192, 256)` vs. dwpose/rtmw's `(288, 384)` (2.25× the pixel
+area) — no matching-resolution easy_ViTPose wholebody checkpoint is known to
+exist — so any vitpose-vs-others accuracy gap above (here and in Phase 3 below) is
+confounded by input resolution, not a clean architecture comparison.
 
 **`normalizer/` and `features.py` are two responsibilities, kept as two files.**
 Normalization is the *swappable* strategy the Phase 3 grid ablates; feature
@@ -211,7 +279,10 @@ swappable `extractor/` backends).
     tilted head is grammatical and must be preserved.
 - **`features.py`** — the assembly pipeline over the normalized blocks:
   1. **keypoint selection** — keep both hands + upper-body pose (+ face only if NMM
-     is on); drop legs/feet. A modeling choice tuned here, never re-extracted.
+     is on); drop legs/feet by default (a `legs_feet` toggle re-adds them for
+     ablation). Both toggles resolve via `Skeleton.region()` — by meaning, not
+     name-prefix matching — so the drop works identically across topologies. A
+     modeling choice tuned here, never re-extracted.
   2. **normalization** — call the injected normalizer per block.
   3. **confidence handling** — zero/flag points below `conf_thr`; append the
      confidence as an extra channel; a missing hand → zero block + presence flag.
@@ -223,7 +294,10 @@ swappable `extractor/` backends).
      and the location head reads the body slice.
   5. **velocity deltas** (toggleable, near-default) — append per-keypoint change
      from the previous frame; movement is a phonological parameter, so hand it to
-     the model explicitly.
+     the model explicitly. A point absent (score 0) on either side of a delta gets
+     a zero delta instead of differencing against its zero-fill — signing occludes
+     hands constantly, and without this a hand disappearing-then-reappearing read
+     as two violent fake jumps.
   6. **sequence stacking** — pile per-frame vectors into `(T, F)`; pad/crop (or
      resample) to a fixed length. DTW is exempt — it handles variable length.
   7. **standardization** (toggleable) — per-feature mean/std computed on **train
@@ -240,31 +314,139 @@ swappable `extractor/` backends).
 - **Done when:** signing one of the 20 signs into the webcam yields the closest sign
   name + a distance score, live, and the mother/father minimal pair is
   distinguished. Defaults: MediaPipe, shoulder-global + local-hand normalization, DTW.
+  **DONE** — `scripts/live_demo.py` runs the live loop; `scripts/eval_slice.py`
+  measures the val split (current best MediaPipe 66.2% top-1 / 95.0% top-5 with
+  `--trim-to-motion`); mother/father and every other in-slice minimal pair are
+  quantified in `scripts/eval_minimal_pairs.py` (findings below) rather than only
+  eyeballed live.
 
 *(`dataset.py` is already built in Phase 1 — the loader, fixed-length wrapper, and
 label encoder exist; Phase 2 consumes it rather than rebuilding it.)*
 
-### Phase 3 — Benchmarking (now that a system exists to measure)
+### Phase 2 — post-milestone findings (the experiment sweep)
 
-**The filter that decides most of this:** training and serving must use the *same*
+After the milestone, a series of cheap experiments characterized *which* levers move
+accuracy — the real payoff of the thin slice, and the map Phase 4 is built from.
+Numbers are 20-sign val split, held-out signers, training-free DTW. **Caveat that
+applies to all of them:** 80 val clips ⇒ ~±11pp binomial error, and per-sign rows are
+3–5 clips each — only ~10pt+ moves are trustworthy; do not tune against single signs.
+
+1. **Extractor comparison — MediaPipe wins, and it's real.** Across every in-slice
+   minimal pair, MediaPipe separates pairs far better than dwpose/rtmw/vitpose
+   (father/mother 11–15% confusion vs 36–41%). Confirmed *not* a confound: ~90% of
+   the advantage survives binarizing the confidence channel (so it isn't MediaPipe's
+   handedness-score / hardcoded-1.0 semantics vs the rtmlib graded scores); it
+   survived the cache-integrity scare; and it survived fixing a **face-region
+   asymmetry** (MediaPipe's coarse nose/eyes/ears had been gated behind `--face`
+   while COCO's rode in the global block by default — a real confound in every prior
+   mediapipe-vs-rtmlib number, now fixed by moving MediaPipe's 5 matching coarse
+   landmarks into `body_upper`; father/mother moved 11%→15% after). The architectural
+   reason it should win: MediaPipe re-crops each hand and runs a dedicated
+   high-resolution hand model, vs the rtmlib backends resolving hands inside a
+   downscaled person crop. **One counterexample:** me/you, where MediaPipe is not
+   ahead under either mode.
+
+2. **Rest-frame trimming — the biggest single lever (+17.4pp top-1), MediaPipe only.**
+   ASL Citizen clips are recorded rest→sign→rest (the cache investigation found one
+   clip with 11 byte-identical opening frames). DTW normalizes total path cost by
+   length, so shared rest regions align cheaply against *every* sign and compress all
+   distances together. Trimming to the motion-active span: MediaPipe 48.8→66.2 top-1,
+   80.0→95.0 top-5. **But trim helps only MediaPipe** (dwpose was byte-identical
+   with/without): MediaPipe runs VIDEO mode with temporal smoothing so true rest reads
+   as still and trims cleanly, while the rtmlib backends run frame-independent IMAGE
+   mode whose per-frame jitter keeps "rest" above the motion threshold. `trim_to_motion`
+   is a `features.py` toggle (off by default) sharing the `hand_motion_energy()`
+   implementation that Phase 6's live segmenter will reuse. **Watch:** a sign with a
+   genuinely-held handshape at onset/offset could have real content trimmed — verify
+   the threshold only eats pre/post rest, and that it doesn't over-trim a live attempt.
+
+3. **Depth proxies — measured, did not help.** Hypothesis: me/you (~37–45% confusion
+   even on MediaPipe) fails because the contrast is along the camera axis where 2D is
+   blind. Added `depth_proxies` features (per-hand apparent size = wrist→mcp / shoulder
+   width, and arm foreshortening) — derived from existing 2D keypoints, no re-extraction,
+   works on all backends. Result: byte-identical me/you confusion. The raw signal
+   doesn't separate the pair (me clips cluster 0.30–0.32, you clips scatter 0.19–0.39
+   and overlap). And me/you are **indexical/deictic** signs — the spatial-grammar class
+   scoped out of the project — so this pair may simply be a poor curriculum fit. True z
+   remains a possible Phase 3 ablation but is likely not worth re-extraction for one
+   out-of-scope pair.
+
+4. **Parameter ranking — `repeated` is hardest.** From the 60-sign `--full-curriculum`
+   run (real support this time: 40 handshape pairs, 14 major_location), `repeated`
+   comes out hardest in *every* backend's own column (38–54% confusion) — the one
+   ranking claim the data supports. `minor_location` (1 pair) and `movement` (3 pairs)
+   have too few pairs to rank. The earlier pooled "handshape is weakest" claim did NOT
+   hold per-backend (MediaPipe's handshape confusion, 24%, is one of its lower rates).
+   **For Phase 4:** `repeated` is a *temporal* property (does the movement cycle?)
+   that DTW's length-normalization actively smears — it needs an explicit
+   tempo/periodicity feature, not just more geometry.
+
+Two eval hygiene notes carried forward: pooling train+val+test in the minimal-pair
+eval means query clips self-match at distance 0 (fine for *relative* comparison, not
+absolute rates — the 60-way run uses leave-one-out to avoid this); and reference-bank
+size differs between the 20-sign and 60-sign runs, so never compare rates across bank
+sizes.
+
+### Phase 3 — Benchmarking — status: mostly answered, narrowed to two ablations
+
+**The central Phase-3 question — which extractor — is effectively answered: MediaPipe**
+(see Phase 2 findings #1). So this is no longer a full grid to run; it's two specific
+loose ends, then move to Phase 4. Cache-integrity is resolved (rtmlib only ran IMAGE
+mode; clean across all 1,874 clips × 4 extractors).
+
+**Loose end A — the running-mode confound (do before canonizing "MediaPipe wins by
+34pts").** The 66-vs-32 gap conflates backend quality with running mode: rest-frame
+trimming (+17pp) only helps MediaPipe because it runs VIDEO mode with temporal
+smoothing, while the rtmlib backends run IMAGE mode. Two honest options: (a) re-run
+the rtmlib backends in a smoothed/tracked mode and re-measure, or (b) simply *state*
+that MediaPipe's default running mode is part of why it wins and stop there. The
+minimal-pair advantage (finding #1) is independent of trim and already favors
+MediaPipe, so this doesn't change the decision — it changes how the margin is
+reported. Cheap; worth doing before the number goes in a paper/README.
+
+**Loose end B — true z as a targeted ablation (optional, low priority).** Depth
+proxies didn't help me/you (finding #3). If revisited, the hypothesis is specific:
+"MediaPipe *with* its z channel reduces me/you confusion without hurting overall
+top-1." But me/you is one out-of-scope indexical pair, and z requires re-extracting
+MediaPipe (it currently discards the third coordinate at write time) and would break
+apples-to-apples with the 2D rtmlib backends — so likely not worth it. Recorded so the
+decision is deliberate, not forgotten.
+
+**Everything below is the original full-sweep design, kept for reference** — run it
+only if the extractor decision is reopened (e.g. MediaPipe fails a real-time or
+robustness bar in the live tool).
+
+**The filter that would decide a full sweep:** training and serving must use the *same*
 extractor, so anything that can't run real-time on the 4070 is disqualified as the
 live extractor regardless of its accuracy.
 
-**Candidates — four, all built.** MediaPipe Holistic (current default), DWPose-l,
-RTMW-x, and ViTPose-l are all wired behind the `Extractor` interface; the three
-rtmlib backends share `rtmlib_base.py` and the same COCO-WholeBody 133 topology,
-so nothing downstream changes when swapping among them. All four are already
-cached over the manifest (Phase 1), so the head-to-head is ready to run:
+**Candidates — four, all built.** MediaPipe Holistic (default), DWPose-l, RTMW-x, and
+ViTPose-l are all wired behind the `Extractor` interface; the three rtmlib backends
+share `rtmlib_base.py` and the same COCO-WholeBody 133 topology, so nothing downstream
+changes when swapping among them. All four are already cached over the manifest:
 
 | Candidate | Model | Notes |
 |---|---|---|
 | **MediaPipe Holistic** (current default) | 553 kpts + blendshapes | the *face-detail* / NMM contender |
 | **DWPose-l** | `rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288` | RTMPose-large + DW distillation |
 | **RTMW-x** | `rtmw-dw-x-l_simcc-cocktail14_270e-384x288` | newer arch; use 384×288 for hand detail |
-| **ViTPose-l** | rtmlib ViTPose wholebody (133) | accuracy leader in the family |
+| **ViTPose-l** | rtmlib ViTPose wholebody (133), `easy_ViTPose` export | accuracy leader in the family — **but see caveat below** |
 
 All four are built and cached; the head-to-head is a matter of running the screens
 below, not new integration.
+
+**ViTPose resolution confound (read before trusting any vitpose-vs-others number):**
+its checkpoint runs the pose model at `POSE_INPUT_SIZE = (192, 256)`, while DWPose
+and RTMW both run at `(288, 384)` — 2.25× the pixel area. No matching-resolution
+`easy_ViTPose` wholebody export is known to exist as of this writing, so any
+accuracy gap between vitpose and the other two rtmlib backends is confounded by
+input resolution, not a clean architecture comparison — factor this in before
+concluding anything about ViTPose-the-architecture specifically. Separately, its
+133-keypoint index order (does it actually match `COCO_WHOLEBODY`?) was unverified
+until `scripts/verify_vitpose_topology.py` checked it against dwpose on shared
+cached clips: same-index correspondence beats every left/right-swap test across
+shoulders/elbows/wrists/hips/knees/ankles/hand-roots, so the topology itself is
+confirmed correct — only the resolution confound remains open.
 
 **Dropped:** Sapiens, AlphaPose/Halpe, SDPose, SMPLest-X. All are separate
 integrations that won't hit real-time on a laptop 4070. Sapiens specifically
@@ -513,9 +695,14 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
     src/aslcv/
       extractor/       # DONE — 4 backends (mediapipe/dwpose/rtmw/vitpose) + rtmlib_base
       dataset.py       # DONE — cached-sequence loader + splits + label encoder
-      features.py      # Phase 2 — feature assembly (select/concat/confidence/velocity/stack/standardize)
-      normalizer/      # Phase 2 — ShoulderNormalizer (global + local-hand); BBox skipped as unsound
-      grading/         # Phase 4 — embedding + phonological heads + DTW
+      features.py      # DONE — feature assembly (select/concat/confidence/velocity/stack/standardize);
+                        #   legs/feet dropped by default via Skeleton.region(); velocity zeroes
+                        #   deltas across presence gaps; trim_to_motion + depth_proxies toggles;
+                        #   hand_motion_energy() shared with the future live segmenter
+      normalizer/      # DONE — ShoulderNormalizer (global + local-hand); BBox skipped as unsound
+      pipeline_config.py # DONE — add_pipeline_args/build_pipeline: every script builds the
+                        #   feature pipeline identically + prints the resolved config each run
+      grading/         # Phase 4 — embedding + phonological heads + DTW (NEXT)
       production/      # Phase 5
         gloss_rules.py #   5b — gloss + NMM rule engine (BUILT)
         retrieval.py   #   5a — id_gloss → reference clip + pose sequence (later)
@@ -524,7 +711,13 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
         templates/     #   5c — correct-by-construction generation (later)
       learner/         # Phase 6 — learner model + adaptive engine
       generator/       # Phase 6 — drills, contrastive pairs, sentence prompts
-    scripts/           # DONE — extract_landmarks.py (extract), verify_cache.py (integrity)
+    scripts/           # DONE — extract_landmarks.py (extract, records provenance),
+                       #   verify_cache.py (integrity + provenance/staleness), render_clip.py
+                       #   (draw cached poses back onto video for eyeballing), eval_slice.py
+                       #   (DTW top-1/top-5 on the val slice), live_demo.py (webcam + --selftest),
+                       #   eval_minimal_pairs.py (contrastive-pair confusability × 4 extractors,
+                       #   by parameter; --full-curriculum for 60-way), measure_motion_energy.py
+                       #   (rest-frame diagnostic), verify_vitpose_topology.py
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
     app/               # Phase 6 — the loop, feedback presenter (LLM English only)
     tests/
