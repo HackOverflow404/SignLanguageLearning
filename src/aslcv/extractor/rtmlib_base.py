@@ -48,9 +48,12 @@ class RTMLibWholebodyExtractor(Extractor):
 
     IMAGE (default) -- detect on every frame, no reuse. Correct for single
         stills and unordered frames; `process_every_n_frames` is ignored.
-    VIDEO -- ordered offline processing. Runs detection on every
-        `process_every_n_frames`-th frame and returns the cached pose in
-        between, trading temporal resolution for throughput on a file. Blocks
+    VIDEO -- ordered offline processing. `process_every_n_frames` MUST be 1
+        (enforced at construction -- the constructor raises otherwise): every
+        frame is detected, no reuse. This is what offline batch extraction over
+        a video file needs -- silently reusing the last pose for n>1 frames
+        would duplicate real frames into the cache and zero the velocity delta
+        between them, which is never safe for data you will train on. Blocks
         while a frame is being processed (fine for batch extraction).
     LIVE -- a real-time camera. Detection runs on a background thread; `extract`
         submits the newest frame and returns immediately with the most recently
@@ -69,7 +72,7 @@ class RTMLibWholebodyExtractor(Extractor):
         self,
         device="cuda",
         backend="onnxruntime",
-        process_every_n_frames=3,
+        process_every_n_frames=1,
         openpose_skeleton=False,
         kpt_thr=0.43,
         running_mode: RunningMode = RunningMode.IMAGE,
@@ -77,12 +80,20 @@ class RTMLibWholebodyExtractor(Extractor):
         super().__init__(running_mode)
         if not self.POSE_URL:
             raise ValueError(f"{type(self).__name__} must set POSE_URL")
+        if running_mode is RunningMode.VIDEO and process_every_n_frames != 1:
+            raise ValueError(
+                f"{type(self).__name__}: VIDEO-mode rtmlib extraction requires "
+                f"process_every_n_frames=1 (got {process_every_n_frames}). n>1 "
+                f"duplicates real frames into the cache and zeroes velocity deltas "
+                f"between them -- never safe for data you will train on. Use IMAGE "
+                f"mode (offline batch extraction; ignores this setting) or LIVE mode "
+                f"(drops frames instead of duplicating them) if you need throughput."
+            )
         self.device = device
         self.backend = backend
         self.openpose_skeleton = openpose_skeleton
         self.kpt_thr = kpt_thr
         self.process_every_n_frames = process_every_n_frames
-        self.frame_idx = 0
         self._last_pose = None
 
         self.custom = Custom(
@@ -148,18 +159,11 @@ class RTMLibWholebodyExtractor(Extractor):
             with self._pose_lock:
                 return self._last_pose
 
-        if self.running_mode is RunningMode.VIDEO:
-            # Detect on frame 0, then every n-th. The old `(idx+1) % n` dropped the
-            # first two frames as None -- exactly where a sign's onset lives. With
-            # n==1 (the correct default for OFFLINE extraction) this detects every
-            # frame. n>1 is a live-throughput hack that duplicates real frames into
-            # the cache, which zeroes velocity features -- do not use it for data
-            # you will train on.
-            skip = self.frame_idx % self.process_every_n_frames != 0
-            self.frame_idx += 1
-            if skip and self._last_pose is not None:
-                return self._last_pose
-
+        # IMAGE and VIDEO both fall through to here and detect every frame --
+        # VIDEO used to have a skip-and-reuse-last-pose branch, but the
+        # constructor now guarantees process_every_n_frames == 1 whenever
+        # running_mode is VIDEO (see __init__), which made that branch an
+        # unconditional no-op, so it was removed rather than left dead.
         self._last_pose = self._pose_from_frame(frame)
         return self._last_pose
 

@@ -3,8 +3,10 @@
 Runs under pytest OR as a plain script (`python tests/test_dwpose_running_mode.py`).
 The rtmlib `Custom` predictor (which needs onnxruntime + model downloads) is
 replaced with an in-memory fake, so these tests exercise the mode dispatch --
-IMAGE detects every frame, VIDEO skips + reuses the cache, LIVE runs detection
-on a background thread and drops stale frames -- with no GPU or network.
+IMAGE detects every frame, VIDEO also detects every frame (process_every_n_frames
+!= 1 is rejected at construction -- there is no skip-and-reuse path anymore, see
+rtmlib_base.py), LIVE runs detection on a background thread and drops stale
+frames -- with no GPU or network.
 """
 
 import threading
@@ -72,19 +74,25 @@ def test_image_mode_processes_every_frame():
 # --- VIDEO -----------------------------------------------------------------
 
 
-def test_video_mode_skips_and_reuses_cache():
-    ext = build_dw(RunningMode.VIDEO, process_every_n_frames=3)
-    r1 = ext.extract(frame(1))  # frame 1 -> skipped, cache empty
-    r2 = ext.extract(frame(2))  # frame 2 -> skipped
-    r3 = ext.extract(frame(3))  # frame 3 -> processed
+def test_video_mode_rejects_n_not_equal_1():
+    """n>1 in VIDEO mode used to duplicate frames into the cache and zero the
+    velocity delta between them -- never safe for data you will train on. The
+    constructor now refuses to build such an extractor at all."""
+    try:
+        build_dw(RunningMode.VIDEO, process_every_n_frames=3)
+        assert False, "expected ValueError for VIDEO + process_every_n_frames=3"
+    except ValueError as e:
+        assert "process_every_n_frames" in str(e)
 
-    assert ext.custom.calls == 1
-    assert r1 is None and r2 is None
-    assert r3.keypoints[0, 0] == 3
 
-    r4 = ext.extract(frame(4))  # frame 4 -> skipped, returns cached frame-3 pose
-    assert r4.keypoints[0, 0] == 3
-    assert ext.custom.calls == 1
+def test_video_mode_processes_every_frame():
+    ext = build_dw(RunningMode.VIDEO, process_every_n_frames=1)
+    p1 = ext.extract(frame(1))
+    p2 = ext.extract(frame(2))
+    p3 = ext.extract(frame(3))
+
+    assert ext.custom.calls == 3
+    assert (p1.keypoints[0, 0], p2.keypoints[0, 0], p3.keypoints[0, 0]) == (1, 2, 3)
     ext.close()
 
 

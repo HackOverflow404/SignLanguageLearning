@@ -15,10 +15,17 @@ Per clip -> data/cache/{extractor}/{video_id}.npz with arrays:
     keypoints    (T, K, 2) float32   pixel coords in the extractor's native topology
     scores       (T, K)    float32   per-keypoint confidence
     blendshapes  (T, 52)   float32   MediaPipe only -- ARKit facial coeffs (NMM)
-and metadata: extractor, skeleton, K, fps, source_video.
+and metadata: extractor, skeleton, K, fps, source_video, running_mode,
+process_every_n_frames, checkpoint, commit_hash. The provenance fields
+(running_mode/process_every_n_frames/checkpoint/commit_hash) exist so "was this
+cache built with a setting that corrupts data?" (e.g. the old rtmlib
+process_every_n_frames=3 default) is a metadata lookup, not a forensic
+frame-duplication audit -- see scripts/verify_cache.py, which flags any cached
+clip whose recorded config doesn't match what the current pipeline would produce.
 
 Also writes data/cache/{extractor}/_manifest.csv = the input rows + n_frames +
-hand_dropout_rate per cached clip.
+hand_dropout_rate + the same provenance fields, read back from each clip's own
+.npz (not assumed from the current run), per cached clip.
 
 Handedness: videos are NOT mirrored, so MediaPipe is built mirrored=False and
 cv2.flip is never applied (asserted at startup). MediaPipe runs in VIDEO mode
@@ -29,6 +36,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -96,6 +104,59 @@ def hand_indices(name, skeleton):
     return np.array(list(LEFT_HAND) + list(RIGHT_HAND))
 
 
+# ---- extraction provenance ---------------------------------------------------
+
+def git_commit_hash():
+    """Best-effort current commit hash, for the extraction-provenance record.
+    Never fatal: returns "" if this isn't a git checkout, git isn't installed, or
+    the call times out -- provenance is a diagnostic aid, not a hard requirement."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, timeout=5)
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def checkpoint_id(name, extractor):
+    """Model checkpoint identifier for provenance: the pose .task path for
+    MediaPipe (it loads three models -- pose/face/hands -- but the pose model is
+    the primary one; face/hand paths aren't currently tracked), or POSE_URL for
+    the rtmlib backends (one checkpoint per subclass)."""
+    if name == "mediapipe":
+        from aslcv.extractor.mediapipe import POSE_MODEL_PATH
+        return POSE_MODEL_PATH
+    return getattr(extractor, "POSE_URL", "")
+
+
+def extraction_provenance(name, extractor, commit_hash):
+    """Per-backend-run provenance, merged into every clip's meta this run writes.
+    `process_every_n_frames` defaults to 1 via getattr for backends (MediaPipe)
+    that don't have the concept at all -- MediaPipe's VIDEO mode has no frame-skip
+    lever, it detects every frame handed to it, which IS what n=1 means here."""
+    return dict(
+        running_mode=extractor.running_mode.value,
+        process_every_n_frames=getattr(extractor, "process_every_n_frames", 1),
+        checkpoint=checkpoint_id(name, extractor),
+        commit_hash=commit_hash,
+    )
+
+
+PROVENANCE_FIELDS = ("running_mode", "process_every_n_frames", "checkpoint", "commit_hash")
+
+
+def read_provenance(npz_data):
+    """Provenance fields from an already-open np.load() result, tolerant of older
+    caches written before these fields existed -- missing ones read as "unknown"
+    rather than raising, since an old cache isn't WRONG, just undocumented."""
+    out = {}
+    for field in PROVENANCE_FIELDS:
+        out[field] = str(npz_data[field]) if field in npz_data.files else "unknown"
+    return out
+
+
 # ---- per-video extraction ---------------------------------------------------
 
 def extract_video(extractor, video_path, K, want_blendshapes):
@@ -153,7 +214,7 @@ def write_npz(path, keypoints, scores, blendshapes, meta):
 
 # ---- per-backend run --------------------------------------------------------
 
-def run_backend(name, rows, force):
+def run_backend(name, rows, force, commit_hash):
     print(f"\n{'=' * 70}\n[{name}] START  ({len(rows)} clips)\n{'=' * 70}", flush=True)
     skeleton, skeleton_name = skeleton_for(name)
     K = len(skeleton.names)
@@ -176,6 +237,8 @@ def run_backend(name, rows, force):
         extractor = BUILDERS[name]()
         if name == "mediapipe":
             assert extractor._mirrored is False, "mediapipe must be built mirrored=False"
+        provenance = extraction_provenance(name, extractor, commit_hash)
+        print(f"[{name}] provenance: {provenance}", flush=True)
         is_tty = sys.stderr.isatty()
         iterator = tqdm(todo, desc=name, file=sys.stderr) if is_tty else todo
         try:
@@ -185,7 +248,7 @@ def run_backend(name, rows, force):
                     kp, sc, bs, fps = extract_video(
                         extractor, REPO / r["video_path"], K, want_blendshapes)
                     meta = dict(extractor=name, skeleton=skeleton_name, K=K, fps=fps,
-                                source_video=r["video_path"])
+                                source_video=r["video_path"], **provenance)
                     write_npz(cache_dir / f"{vid}.npz", kp, sc, bs, meta)
                     processed += 1
                     total_frames += kp.shape[0]
@@ -209,11 +272,16 @@ def run_backend(name, rows, force):
 
 
 def write_output_manifest(name, cache_dir, rows, hand_idx):
-    """Input rows + n_frames + hand_dropout_rate, for every row with a cached .npz."""
+    """Input rows + n_frames + hand_dropout_rate + extraction provenance, for every
+    row with a cached .npz. Provenance is read from EACH clip's own .npz metadata
+    (not assumed from this run's live extractor), so a manifest written after a
+    partial/resumed run accurately reflects what is actually on disk -- including
+    older clips cached before provenance fields existed ("unknown", not a crash;
+    see read_provenance)."""
     if not rows:
         return
     out = cache_dir / "_manifest.csv"
-    cols = list(rows[0].keys()) + ["n_frames", "hand_dropout_rate"]
+    cols = list(rows[0].keys()) + ["n_frames", "hand_dropout_rate"] + list(PROVENANCE_FIELDS)
     n = 0
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
@@ -225,9 +293,10 @@ def write_output_manifest(name, cache_dir, rows, hand_idx):
             try:
                 with np.load(npz) as d:
                     sc = d["scores"]
-                row = dict(r)
-                row["n_frames"] = sc.shape[0]
-                row["hand_dropout_rate"] = round(hand_dropout_rate(sc, hand_idx), 4)
+                    row = dict(r)
+                    row["n_frames"] = sc.shape[0]
+                    row["hand_dropout_rate"] = round(hand_dropout_rate(sc, hand_idx), 4)
+                    row.update(read_provenance(d))
                 w.writerow(row)
                 n += 1
             except Exception as e:
@@ -257,14 +326,15 @@ def main():
 
     names = ALL_ORDER if args.extractor == "all" else [args.extractor]
     rows = read_manifest(args.limit)
+    commit_hash = git_commit_hash()
     print(f"manifest: {len(rows)} clips | backends: {', '.join(names)} | "
-          f"python: {sys.executable}", flush=True)
+          f"python: {sys.executable} | commit: {commit_hash or '(unknown)'}", flush=True)
 
     t0 = time.time()
     ok = True
     for name in names:
         try:
-            run_backend(name, rows, args.force)
+            run_backend(name, rows, args.force, commit_hash)
         except Exception as e:
             ok = False
             print(f"[{name}] BACKEND FAILED (continuing to next): {e}", file=sys.stderr, flush=True)
