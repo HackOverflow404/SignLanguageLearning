@@ -12,7 +12,7 @@ which concrete one it holds. That injection seam is the whole reason this file
 exists; it is deliberately minimal -- one abstract method, one return type.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -24,6 +24,10 @@ from ..extractor.base import Pose, Skeleton
 # names to its own points, and tests/test_anchors.py asserts every skeleton covers
 # every name. The hand anchors give ShoulderNormalizer a per-hand origin
 # (`*_hand_wrist`) and scale reference (`*_hand_wrist` -> `*_hand_middle_mcp`).
+# `*_elbow` / `*_body_wrist` are the ARM-CHAIN joints (distinct from `*_hand_wrist`,
+# the hand-block root -- never confuse the two, see coco_wholebody.py's comment) --
+# used for the optional arm-foreshortening depth proxy (`*_elbow` -> `*_body_wrist`
+# distance / shoulder width), not any hand-shape frame.
 REQUIRED_ANCHORS = (
     "nose",
     "left_shoulder",
@@ -34,6 +38,41 @@ REQUIRED_ANCHORS = (
     "right_hand_wrist",
     "left_hand_middle_mcp",
     "right_hand_middle_mcp",
+    "left_elbow",
+    "right_elbow",
+    "left_body_wrist",
+    "right_body_wrist",
+)
+
+# The cross-topology REGION vocabulary -- one level up from REQUIRED_ANCHORS (a
+# region is a SET of points, an anchor a single point). Every skeleton must resolve
+# every one of these names via `Skeleton.region()`; tests/test_regions.py asserts
+# coverage. A region may legitimately be empty for a topology that lacks it (e.g. a
+# hand-only skeleton would still declare `face`/`legs_feet`/`body_upper` as empty
+# tuples rather than omit them) -- empty is a valid selection, missing is a KeyError.
+# Together the six regions partition every keypoint a skeleton has (disjoint, full
+# coverage) for both current topologies; that is a property of THIS vocabulary, not
+# a general requirement future topologies must satisfy if they don't naturally fit.
+#
+#   body_upper  -- torso reference points (shoulders); NOT the elbow/wrist chain.
+#   arms        -- elbow -> wrist (and, where a topology's pose block carries them,
+#                  the wrist-adjacent extra points like fingertips) -- excludes the
+#                  dedicated hand-model points, which live in left_hand/right_hand.
+#   left_hand   -- the left hand's own keypoint block (wrist root through fingers).
+#   right_hand  -- the right hand's own keypoint block.
+#   face        -- every face/head point, coarse (nose/eyes/ears on the body model)
+#                  and fine (a dedicated face mesh, where the topology has one).
+#   legs_feet   -- hips through feet. features.py drops this region by default: it
+#                  is the group most likely to be hallucinated under seated,
+#                  upper-body framing, and it rides into every DTW distance
+#                  otherwise (see CLAUDE.md known issue #2).
+REQUIRED_REGIONS = (
+    "body_upper",
+    "arms",
+    "left_hand",
+    "right_hand",
+    "face",
+    "legs_feet",
 )
 
 
@@ -74,6 +113,20 @@ class NormalizedPose:
         (they are not spatial, so normalization does not touch them). Kept here so a
         frame's full signal -- geometry + non-manual markers -- lives on one object
         for the Phase 4 NMM heads. None when the backend supplies none (e.g. DWPose).
+    scales : dict[str, float]
+        Named scale factors the normalizer computed while building its frames but
+        would otherwise discard -- e.g. ShoulderNormalizer's per-hand wrist->knuckle
+        distance, divided by shoulder width to make it signer- and distance-invariant
+        (dimensionless). Apparent size is the classic monocular depth cue: 2D
+        keypoints alone are blind to camera-axis movement, but a hand's apparent
+        size growing/shrinking IS that movement, and normalizers already compute the
+        raw distance as a scale DIVISOR -- this field is that same number, kept
+        instead of thrown away. features.py's `depth_proxies` toggle (default off
+        until measured) reads this dict and appends it as extra per-frame columns.
+        Empty for a normalizer that computes no such scale, or for a frame where the
+        underlying points were degenerate (matching the zero-fill convention used
+        elsewhere -- a missing/degenerate scale is recorded as 0.0, not omitted, so
+        the key set stays stable across frames).
 
     Deliberately NOT carried: `width` / `height`. After normalization the coordinates
     are frame-relative and unitless, so the source pixel dimensions are meaningless
@@ -91,6 +144,7 @@ class NormalizedPose:
     scores: np.ndarray
     blocks: dict[str, slice]
     blendshapes: np.ndarray | None = None
+    scales: dict[str, float] = field(default_factory=dict)
 
     def block(self, name: str) -> tuple[np.ndarray, np.ndarray]:
         """The normalized (keypoints, scores) views for one block by name.

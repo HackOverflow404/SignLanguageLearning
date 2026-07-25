@@ -96,9 +96,43 @@ _POSE_ANCHOR_LANDMARKS = {
     "nose": 0,
     "left_shoulder": 11,
     "right_shoulder": 12,
+    "left_elbow": 13,
+    "right_elbow": 14,
+    "left_body_wrist": 15,   # arm-chain wrist -- NOT left_hand_wrist (the hand-block
+    "right_body_wrist": 16,  # root, added below); see coco_wholebody.py's comment.
     "left_hip": 23,
     "right_hip": 24,
 }
+
+# BlazePose's 33 pose landmarks split by semantic block (canonical cross-topology
+# REGIONS, normalizer.base.REQUIRED_REGIONS):
+#   0-10   face/head, coarse. FIVE of these are the same coarse head reference
+#          COCO-WholeBody carries in ITS body_upper (nose=0, left_eye=2,
+#          right_eye=5, left_ear=7, right_ear=8 -- BlazePose's single "eye"/"ear"
+#          landmark per side, as opposed to the inner/outer variants) and join
+#          body_upper here too, so --face=False never removes coarse head
+#          location on EITHER topology -- see coco_wholebody.py's _BODY_UPPER_NAMES
+#          for the mirrored COCO side of this. The remaining six (eye_inner/outer
+#          x2 sides, mouth_left/right -- extra granularity COCO's 17-point body
+#          block doesn't have) stay bundled with the 478-point face mesh, since
+#          both are genuinely fine facial detail with no COCO body_upper analog.
+#          PRIOR BEHAVIOR (do not reintroduce): all of 0-10 used to fold into
+#          "face" together, so --face=False silently dropped MediaPipe's nose/
+#          eyes/ears while COCO's stayed -- a real cross-backend confound in any
+#          face=False comparison (COCO's global block always carried head
+#          location; MediaPipe's did not). Confirmed and fixed together with
+#          scripts/eval_minimal_pairs.py's --confidence sweep.
+#   11-22  upper body + arms -- split further into body_upper (11,12: shoulders,
+#          the torso reference) and arms (13-22: elbow, wrist, and the pose
+#          model's own pinky/index/thumb tips -- NOT the dedicated hand-model
+#          points, which live in left_hand/right_hand below).
+#   23-32  legs/feet (hips, knees, ankles, heels, foot index) -- dropped by
+#          default in features.py; see REQUIRED_REGIONS.
+_POSE_BODY_UPPER_HEAD_LANDMARKS = (0, 2, 5, 7, 8)  # nose, left_eye, right_eye, left_ear, right_ear
+_POSE_FACE_FINE_LANDMARKS = (1, 3, 4, 6, 9, 10)  # eye_inner/outer x2, mouth_left/right
+_POSE_BODY_UPPER_LANDMARKS = (11, 12) + _POSE_BODY_UPPER_HEAD_LANDMARKS
+_POSE_ARM_LANDMARKS = tuple(range(13, 23))
+_POSE_LEG_LANDMARKS = tuple(range(23, 33))
 
 
 def _build_skeleton() -> Skeleton:
@@ -139,7 +173,17 @@ def _build_skeleton() -> Skeleton:
         ("right_hand_middle_mcp", _RIGHT_HAND_OFFSET + 9),
     )
 
-    return Skeleton(names=tuple(names), edges=tuple(edges), anchors=anchors)
+    regions = (
+        ("body_upper", tuple(_POSE_OFFSET + i for i in _POSE_BODY_UPPER_LANDMARKS)),
+        ("arms", tuple(_POSE_OFFSET + i for i in _POSE_ARM_LANDMARKS)),
+        ("left_hand", tuple(range(_LEFT_HAND_OFFSET, _LEFT_HAND_OFFSET + HAND_LM_COUNT))),
+        ("right_hand", tuple(range(_RIGHT_HAND_OFFSET, _RIGHT_HAND_OFFSET + HAND_LM_COUNT))),
+        ("face", tuple(_POSE_OFFSET + i for i in _POSE_FACE_FINE_LANDMARKS)
+                 + tuple(range(_FACE_OFFSET, _FACE_OFFSET + FACE_LM_COUNT))),
+        ("legs_feet", tuple(_POSE_OFFSET + i for i in _POSE_LEG_LANDMARKS)),
+    )
+
+    return Skeleton(names=tuple(names), edges=tuple(edges), anchors=anchors, regions=regions)
 
 
 MEDIAPIPE_HOLISTIC = _build_skeleton()

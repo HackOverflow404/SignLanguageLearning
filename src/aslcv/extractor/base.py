@@ -43,6 +43,11 @@ class Skeleton:
     # differ per topology (COCO-WholeBody shoulders = 5, 6; MediaPipe pose = 11, 12),
     # so normalization reads them from here instead of hard-coding a layout.
     anchors: tuple[tuple[str, int], ...] = ()  # e.g. (("left_shoulder", 5), ...)
+    # Semantic keypoint GROUPS downstream code needs by meaning, not by name-prefix
+    # matching or hardcoded index ranges -- one level up from `anchors` (a single
+    # point) to a set of points. See normalizer/base.py:REQUIRED_REGIONS for the
+    # canonical cross-topology vocabulary every skeleton must provide.
+    regions: tuple[tuple[str, tuple[int, ...]], ...] = ()  # e.g. (("left_hand", (91, ...)), ...)
 
     def anchor(self, name: str) -> int:
         """Index of a named semantic anchor (e.g. 'left_shoulder'); raises if absent."""
@@ -51,6 +56,21 @@ class Skeleton:
                 return index
         available = [n for n, _ in self.anchors]
         raise KeyError(f"{name!r} is not a named anchor of this skeleton; have {available}")
+
+    def region(self, name: str) -> tuple[int, ...]:
+        """Indices of a named semantic region (e.g. 'left_hand'); raises if absent.
+
+        May return an empty tuple for a region a topology genuinely lacks (e.g. a
+        hand-only skeleton would define `body_upper`/`legs_feet`/`face` as empty
+        rather than omit them) -- callers should treat "region exists but is empty"
+        and "region absent" differently: the former is a valid no-op selection, the
+        latter is a KeyError.
+        """
+        for region_name, indices in self.regions:
+            if region_name == name:
+                return indices
+        available = [n for n, _ in self.regions]
+        raise KeyError(f"{name!r} is not a named region of this skeleton; have {available}")
 
 
 @dataclass

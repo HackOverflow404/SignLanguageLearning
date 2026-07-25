@@ -15,6 +15,11 @@ so the +23 face offset can't be mistyped. Slice with them by meaning:
     kp[LEFT_HAND]                     -> just the left-hand points
     kp[FACE_REGIONS["inner_mouth"]]   -> mouth-morpheme points for ASL
 
+These module-level tuples also feed `COCO_WHOLEBODY.regions`, the canonical
+cross-topology vocabulary (normalizer/base.py:REQUIRED_REGIONS) -- so downstream
+code that wants "the legs" or "the left hand" can ask `skeleton.region(name)`
+instead of re-deriving name-prefix matches per topology.
+
 Note: left/right in the face regions follow the iBUG convention (image space),
 which mirrors the subject. Verify once against a real frame (see module docs).
 """
@@ -109,6 +114,30 @@ FACE = _where(lambda n: n.startswith("face_"))
 LEFT_HAND = _where(lambda n: _is_hand(n, "left"))
 RIGHT_HAND = _where(lambda n: _is_hand(n, "right"))
 
+# --- canonical cross-topology REGIONS (normalizer.base.REQUIRED_REGIONS) ----
+# Splits the COCO-17 `BODY` block by meaning: nose/eyes/ears + shoulders
+# (body_upper, coarse head+torso reference) vs the elbow->wrist chain (arms);
+# hips/knees/ankles join `legs_feet` alongside the foot block. `face` reuses the
+# existing 68-point `FACE` constant AS-IS -- unlike MediaPipe, COCO's coarse
+# body-block head points were never folded into "face" by the code this region
+# replaces (features.py's old `name.startswith("face_")` face toggle), so
+# keeping them out of the region here preserves that toggle's exact behavior.
+_BODY_UPPER_NAMES = ("nose", "left_eye", "right_eye", "left_ear", "right_ear",
+                     "left_shoulder", "right_shoulder")
+_ARMS_NAMES = ("left_elbow", "right_elbow", "left_wrist", "right_wrist")
+_LEGS_NAMES = (
+    "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle",
+)
+
+_REGIONS = (
+    ("body_upper", tuple(_idx[n] for n in _BODY_UPPER_NAMES)),
+    ("arms", tuple(_idx[n] for n in _ARMS_NAMES)),
+    ("left_hand", LEFT_HAND),
+    ("right_hand", RIGHT_HAND),
+    ("face", FACE),
+    ("legs_feet", tuple(_idx[n] for n in _LEGS_NAMES) + FEET),
+)
+
 
 def _face(a: int, b: int) -> tuple[int, ...]:
     # resolve face-local numbers to absolute indices via the name map,
@@ -142,6 +171,12 @@ FACE_REGIONS = {
 #   *_hand_middle_mcp  -> *_middle_finger1  base knuckle (MCP); COCO numbers finger
 #                                           joints 1..4 from the base, so *_finger1 is
 #                                           the MCP -- verified by tests/test_anchors.py.
+#   *_body_wrist       -> *_wrist           the ARM-CHAIN wrist (idx 9/10), NOT the
+#                                           hand-block root -- deliberately named
+#                                           differently from *_hand_wrist so the two
+#                                           are never confused. Used with *_elbow for
+#                                           arm-foreshortening scale (a monocular depth
+#                                           proxy), not for any hand-shape frame.
 _ANCHOR_TO_POINT = {
     "nose": "nose",
     "left_shoulder": "left_shoulder",
@@ -152,9 +187,13 @@ _ANCHOR_TO_POINT = {
     "right_hand_wrist": "right_hand_root",
     "left_hand_middle_mcp": "left_middle_finger1",
     "right_hand_middle_mcp": "right_middle_finger1",
+    "left_elbow": "left_elbow",
+    "right_elbow": "right_elbow",
+    "left_body_wrist": "left_wrist",
+    "right_body_wrist": "right_wrist",
 }
 _ANCHORS = tuple((anchor, _idx[point]) for anchor, point in _ANCHOR_TO_POINT.items())
 
 # --- the public artifact ----------------------------------------------------
 
-COCO_WHOLEBODY = Skeleton(names=_NAMES, edges=_EDGES, anchors=_ANCHORS)
+COCO_WHOLEBODY = Skeleton(names=_NAMES, edges=_EDGES, anchors=_ANCHORS, regions=_REGIONS)
