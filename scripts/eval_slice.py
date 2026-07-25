@@ -21,9 +21,8 @@ import yaml
 
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
-from aslcv.features import FeaturePipeline
 from aslcv.grading.dtw_grader import DTWGrader
-from aslcv.normalizer.shoulder import ShoulderNormalizer
+from aslcv.pipeline_config import add_pipeline_args, build_pipeline
 
 REPO = Path(__file__).resolve().parents[1]
 PARENTS = ("mother", "father")
@@ -59,7 +58,7 @@ def main():
     ap.add_argument("--band", type=int, default=None,
                     help="Sakoe-Chiba radius (frames); default full DP")
     ap.add_argument("--limit", type=int, default=None, help="cap val clips (smoke test)")
-    ap.add_argument("--face", action="store_true", help="keep face keypoints in features")
+    add_pipeline_args(ap)
     args = ap.parse_args()
 
     cache_dir = REPO / "data" / "cache" / args.extractor
@@ -73,9 +72,12 @@ def main():
         val_rows = val_rows[:args.limit]
 
     skeleton = skeleton_for(args.extractor)
-    pipeline = FeaturePipeline(ShoulderNormalizer(local_hand=True), skeleton, face=args.face)
-
-    print(f"extractor={args.extractor}  agg={args.agg}  band={args.band}  face={args.face}")
+    print(f"extractor={args.extractor}  agg={args.agg}  band={args.band}")
+    pipeline = build_pipeline(args, skeleton, extractor_name=args.extractor)
+    if args.extractor == "vitpose":
+        print("VITPOSE CAVEAT: topology confirmed correct (scripts/verify_vitpose_topology.py),"
+              " but it runs at (192,256) vs dwpose/rtmw's (288,384) -- any accuracy gap vs. those"
+              " backends is confounded by input resolution, not architecture alone.")
     print(f"building reference bank: {len(train_rows)} train clips over {len(signs)} signs ...")
     t0 = time.time()
     grader = DTWGrader.build(pipeline, cache_dir, signs, train_rows, agg=args.agg, band=args.band)

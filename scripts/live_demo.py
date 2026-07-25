@@ -20,7 +20,11 @@ False), so grading always runs on the RAW frame. `--mirror` only flips the DISPL
     .venv/bin/python scripts/live_demo.py --extractor dwpose
 
 Default config: MediaPipe extractor, ShoulderNormalizer (global + local_hand),
-velocity on, graded confidence, DTW nearest-reference.
+velocity on, graded confidence, DTW nearest-reference -- all overridable via the
+shared flags in aslcv.pipeline_config (--face/--legs-feet/--confidence/
+--no-velocity/--no-local-hand; see --help), the SAME module eval_slice.py and
+eval_minimal_pairs.py build their pipeline through, so a number from any of the
+three scripts is built identically unless a flag says otherwise.
 """
 import argparse
 import csv
@@ -36,9 +40,8 @@ import yaml
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC, MediaPipePoseExtractor
-from aslcv.features import FeaturePipeline
 from aslcv.grading.dtw_grader import DTWGrader
-from aslcv.normalizer.shoulder import ShoulderNormalizer
+from aslcv.pipeline_config import add_pipeline_args, build_pipeline
 
 REPO = Path(__file__).resolve().parents[1]
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -82,10 +85,7 @@ def make_grader(args):
     if not cache_dir.is_dir():
         raise SystemExit(f"no cache at {cache_dir} -- run scripts/extract_landmarks.py --extractor {args.extractor}")
     skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
-    pipeline = FeaturePipeline(
-        ShoulderNormalizer(local_hand=True), skeleton,
-        velocity=True, confidence="graded", face=args.face,
-    )
+    pipeline = build_pipeline(args, skeleton, extractor_name=args.extractor)
     train = cap_per_sign(slice_rows(signs, "train"), args.max_refs)
     print(f"building reference bank: {len(train)} clips over {len(signs)} signs "
           f"({args.extractor}) ...")
@@ -258,12 +258,12 @@ def main():
     ap.add_argument("--agg", default="min", choices=["min", "mean"])
     ap.add_argument("--band", type=int, default=None, help="Sakoe-Chiba radius (frames); faster DTW")
     ap.add_argument("--max-refs", type=int, default=None, help="cap reference clips per sign (faster)")
-    ap.add_argument("--face", action="store_true", help="keep face keypoints in features")
     ap.add_argument("--mirror", dest="mirror", action="store_true", default=True,
                     help="selfie-mirror the DISPLAY (default on; grading uses raw frame)")
     ap.add_argument("--no-mirror", dest="mirror", action="store_false")
     ap.add_argument("--selftest", action="store_true",
                     help="no camera: run the grade path on cached val clips")
+    add_pipeline_args(ap)
     args = ap.parse_args()
 
     if args.selftest:
