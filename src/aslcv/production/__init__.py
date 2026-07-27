@@ -15,7 +15,7 @@ before anything built from it is shown to a learner as authoritative.
 
 from .gloss_rules import (
     Gloss,
-    GlossedSentence,
+    GlossSequence,
     GlossRuleEngine,
     NonManual,
     gloss_sentence,
@@ -24,7 +24,7 @@ from .gloss_rules import (
 __all__ = [
     "Gloss",
     "NonManual",
-    "GlossedSentence",
+    "GlossSequence",
     "GlossRuleEngine",
     "gloss_sentence",
 ]
