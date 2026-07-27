@@ -235,6 +235,182 @@ def test_noun_and_adjective_coordination_are_NOT_flagged():
 
 
 # ---------------------------------------------------------------------------
+# 6b. Fail-closed, probed harder -- partial scope, lexicon ambiguity, wh-word
+#     ambiguity, and multi-clause input. Found one real gap here (AUX-headed
+#     clause coordination silently passed) -- fixed in gloss_rules.py, pinned
+#     below rather than only reported. See PHASE5B_GAP_REPORT.md.
+# ---------------------------------------------------------------------------
+
+# -- partial scope: ONE unknown content word must refuse the WHOLE sentence,
+# regardless of the unknown word's POS or position -- never silently drop it
+# and compose a truncated (or worse, wrong) sentence from the rest.
+PARTIAL_SCOPE_CASES = [
+    ("I live in America.", "America"),        # PROPN, sentence-final content word
+    ("Chicago is good.", "Chicago"),           # PROPN, SUBJECT position
+    ("I want a pizza and coffee.", "pizza"),   # unknown FIRST of two coordinated objects
+    ("My friend Bob is happy.", "Bob"),        # PROPN appositive, mid-sentence
+]
+
+
+@pytest.mark.parametrize("sentence,unknown_word", PARTIAL_SCOPE_CASES)
+def test_partial_scope_refuses_whole_sentence_not_truncated(sentence, unknown_word):
+    """Regardless of WHERE the unknown word sits (subject, object, appositive)
+    or what POS spaCy gives it (PROPN in all these), the engine must refuse
+    the entire sentence -- never silently drop the unknown word and emit a
+    gloss for just the in-curriculum remainder."""
+    seq = E.gloss(sentence)
+    assert seq.in_scope is False, (
+        f"{sentence!r}: expected refusal naming {unknown_word!r}, got a gloss instead "
+        f"-- the unknown word was silently dropped rather than refusing")
+    assert seq.glosses == [], f"{sentence!r}: refused sequence must carry no partial gloss"
+    assert unknown_word in seq.reason, f"{sentence!r}: reason should name {unknown_word!r}"
+
+
+# -- ambiguous lexicon hits: two curriculum signs (or a curriculum sign and a
+# _SUPPLEMENTARY_LEXICON synonym) claiming the same English lemma. No such
+# collision exists in the real curriculum today (checked below), but
+# _build_lexicon has NO way to silently pick a winner if one is ever
+# introduced -- it raises at build time instead. Tested directly against
+# _build_lexicon (not through GlossRuleEngine) since the real curriculum has
+# no live ambiguous case to exercise this through .gloss().
+def test_no_ambiguous_lemma_exists_in_real_curriculum():
+    """The property PARTIAL_SCOPE-adjacent tests can't exercise through
+    .gloss() because none exists today -- pinned directly so a future
+    curriculum.yaml edit that introduces one fails LOUDLY here, not silently
+    via whichever sign iterates last winning the dict merge."""
+    lemma_to_glosses: dict[str, set[str]] = {}
+    for sign in gr._curriculum_signs():
+        for lemma in sign.get("english_lemmas", []):
+            lemma_to_glosses.setdefault(lemma, set()).add(sign["gloss"])
+    ambiguous = {k: v for k, v in lemma_to_glosses.items() if len(v) > 1}
+    assert not ambiguous, f"curriculum.yaml has ambiguous lemma(s): {ambiguous}"
+
+
+def test_ambiguous_lemma_fails_closed_at_build_time():
+    """Directly probes _build_lexicon's collision guard with a synthetic
+    conflict (two different signs claiming lemma 'bank') -- this is the
+    property that matters: if curriculum.yaml ever DOES introduce a genuine
+    collision, the module must refuse to build a lexicon that silently picks
+    a winner, not gloss 'bank' as one sign 90% of the time by iteration
+    order."""
+    with pytest.raises(ValueError, match="ambiguous lexicon entry"):
+        gr._build_lexicon(signs=[
+            {"gloss": "want_2", "english_lemmas": ["bank"]},
+            {"gloss": "money", "english_lemmas": ["bank"]},
+        ])
+
+
+def test_supplementary_lexicon_conflict_also_fails_closed():
+    """Same guard, the other direction: a _SUPPLEMENTARY_LEXICON entry must
+    not silently override a DIFFERENT curriculum mapping for the same lemma."""
+    with pytest.raises(ValueError, match="_SUPPLEMENTARY_LEXICON"):
+        gr._build_lexicon(signs=[{"gloss": "money", "english_lemmas": ["yeah"]}])
+        # 'yeah' -> 'yes' in the real _SUPPLEMENTARY_LEXICON; 'yeah' -> 'money'
+        # here is a synthetic conflict with it.
+
+
+# -- wh-word ambiguity: "who"/"where"/etc. as a RELATIVE PRONOUN ("the
+# friend who is happy") must be distinguished from the same word as a
+# WH-QUESTION word ("who is your friend?") -- confirmed the engine already
+# does this correctly via dependency labels (relcl vs a bare wh-question),
+# not by the surface word alone. Pinned as a regression, not a fix.
+WH_AS_RELATIVE_CLAUSE_CASES = [
+    "My friend who is happy is tired.",
+    "I know where you work.",
+]
+
+
+@pytest.mark.parametrize("sentence", WH_AS_RELATIVE_CLAUSE_CASES)
+def test_wh_word_as_relative_pronoun_refuses_not_tagged_as_question(sentence):
+    """If the engine can't tell a relative-clause 'who'/'where' from a
+    question one, the wrong failure mode is a CONFIDENT wrong tag (treating
+    the whole sentence as a wh-question and slapping brow_furrow on it) --
+    must refuse instead."""
+    seq = E.gloss(sentence)
+    assert seq.in_scope is False, (
+        f"{sentence!r}: expected refusal (relative clause), got sentence_type="
+        f"{seq.sentence_type!r} instead -- a relative-clause wh-word must never "
+        f"be mistaken for a wh-question")
+    assert "construction" in seq.reason
+
+
+WH_AS_QUESTION_CASES = [
+    ("Who is your friend?", "who"),
+    ("Who is happy?", "who"),
+]
+
+
+@pytest.mark.parametrize("sentence,wh_id", WH_AS_QUESTION_CASES)
+def test_wh_word_as_genuine_question_still_works(sentence, wh_id):
+    """Control case for the two tests above: the SAME wh-word, used as an
+    actual question, must still classify and reorder normally -- confirms
+    the relative-clause refusal above is discriminating on the construction,
+    not blanket-refusing the wh-word itself."""
+    seq = E.gloss(sentence)
+    assert seq.in_scope, f"{sentence!r}: expected in-scope, got refused: {seq.reason}"
+    assert seq.sentence_type == "wh_question"
+    assert seq.glosses[-1].asllex_id == wh_id
+
+
+# -- multi-clause / conjoined input: two independent clauses must refuse as
+# a whole, never gloss only (or both, glued together with no boundary
+# marker) as if they were one clause. GAP FOUND AND FIXED: the coordination
+# check only looked at pos_=="VERB", so a second clause built on a COPULA
+# ("...but you ARE happy" -- "are" is tagged AUX, not VERB) slipped through
+# and got silently glued to the first clause's gloss with no separator at
+# all. Fixed in gloss_rules.py's _scope_problems (_CLAUSE_HEAD_POS now
+# covers VERB and AUX); pinned here as a regression.
+AUX_HEADED_CLAUSE_COORDINATION_CASES = [
+    "I am tired but you are happy.",
+    "I am happy and you are tired.",
+]
+
+
+@pytest.mark.parametrize("sentence", AUX_HEADED_CLAUSE_COORDINATION_CASES)
+def test_aux_headed_clause_coordination_refuses(sentence):
+    seq = E.gloss(sentence)
+    assert seq.in_scope is False, (
+        f"{sentence!r}: expected refusal (two independent clauses) -- got a gloss "
+        f"instead, meaning both clauses were silently glued together with no "
+        f"coordination marker")
+    assert "construction" in seq.reason
+
+
+def test_verb_headed_clause_coordination_still_refuses():
+    """Regression for the case that already worked before the AUX fix --
+    confirms broadening the check to AUX didn't accidentally narrow it."""
+    seq = E.gloss("I want coffee and you want water.")
+    assert seq.in_scope is False
+    seq2 = E.gloss("I go home and you go school.")
+    assert seq2.in_scope is False
+
+
+MULTI_CLAUSE_PUNCTUATION_CASES = [
+    "I want coffee; you want water.",   # semicolon-joined clauses
+    "I want coffee, you want water.",   # comma-joined clauses, no conjunction
+]
+
+
+@pytest.mark.parametrize("sentence", MULTI_CLAUSE_PUNCTUATION_CASES)
+def test_multi_clause_without_coordinating_conjunction_refuses(sentence):
+    """Two clauses juxtaposed by punctuation alone (no 'and'/'but') --
+    confirms the refusal isn't keyed to the conjunction word, but to having a
+    second clause (spaCy still attaches the second clause via ccomp/parataxis
+    in these, which the existing _OUT_OF_SCOPE_DEPS already covers)."""
+    seq = E.gloss(sentence)
+    assert seq.in_scope is False, f"{sentence!r}: expected refusal (multi-clause input)"
+
+
+def test_three_way_noun_list_is_NOT_flagged():
+    """Regression guard alongside the multi-clause probes above: an Oxford-
+    comma noun list ('coffee, water, and milk') must stay in scope -- it's
+    not a clause boundary, just a longer object list than the 2-item case
+    already tested in test_noun_and_adjective_coordination_are_NOT_flagged."""
+    seq = E.gloss("I want coffee, water, and milk.")
+    assert seq.in_scope, f"expected in-scope, got refused: {seq.reason}"
+
+
+# ---------------------------------------------------------------------------
 # 7. determinism
 # ---------------------------------------------------------------------------
 

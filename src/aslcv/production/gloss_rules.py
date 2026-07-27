@@ -142,9 +142,16 @@ _CONTENT_POS = {"NOUN", "PROPN", "VERB", "ADJ", "ADV", "NUM", "PRON"}
 
 # Dependency labels marking a construction outside this engine's scope
 # ("complex embedding" in project_workflow.md's out-of-scope list). `conj` is
-# only a problem when it coordinates a second VERB (a second clause) -- noun/
-# adjective coordination ("rice and beans", "happy and tired") stays in scope.
+# only a problem when it coordinates a second CLAUSE -- noun/adjective
+# coordination ("rice and beans", "happy and tired") stays in scope. A second
+# clause's head is VERB ("I go home and you go school") OR AUX when the
+# second clause is copula-based ("I am tired but you are happy" -- "are" is
+# tagged AUX, not VERB, since spaCy treats copulas as auxiliaries). Checking
+# only VERB let this second class of coordinated clause silently through --
+# found via scripts/export_review_sheet.py's fail-closed probing, see
+# tests/test_gloss_rules_corpus.py's test_aux_headed_clause_coordination_refuses.
 _OUT_OF_SCOPE_DEPS = {"relcl", "advcl", "ccomp", "auxpass", "nsubjpass"}
+_CLAUSE_HEAD_POS = {"VERB", "AUX"}
 
 
 def _curriculum_signs() -> list[dict]:
@@ -152,16 +159,40 @@ def _curriculum_signs() -> list[dict]:
     return [s for unit in doc["units"] for s in unit["signs"]]
 
 
-def _build_lexicon() -> dict[str, str]:
+def _build_lexicon(signs: list[dict] | None = None) -> dict[str, str]:
     """lemma -> curriculum gloss, derived from curriculum.yaml's own
     `english_lemmas` per sign, plus _SUPPLEMENTARY_LEXICON. NOT hand-typed:
     editing curriculum.yaml is what changes the vocabulary this engine
-    accepts, so the two can never silently drift apart."""
+    accepts, so the two can never silently drift apart.
+
+    FAILS CLOSED on an ambiguous lemma -- two DIFFERENT curriculum signs (or
+    a curriculum sign and a _SUPPLEMENTARY_LEXICON entry) claiming the same
+    English lemma. There is no tie-break rule; a plain dict-merge would let
+    whichever one is processed last silently win, so a future curriculum.yaml
+    edit could quietly change what an existing sentence glosses to. Raising
+    here means that has to be resolved by a human (rename one entry's
+    english_lemmas, or drop the supplementary synonym) before the module
+    loads at all -- an ambiguity can never reach a learner silently.
+
+    `signs` defaults to the real curriculum; overridable so a test can feed a
+    synthetic conflicting pair without needing a second curriculum.yaml."""
+    if signs is None:
+        signs = _curriculum_signs()
     lexicon: dict[str, str] = {}
-    for sign in _curriculum_signs():
+    for sign in signs:
         for lemma in sign.get("english_lemmas", []):
+            if lemma in lexicon and lexicon[lemma] != sign["gloss"]:
+                raise ValueError(
+                    f"ambiguous lexicon entry: english lemma {lemma!r} maps to both "
+                    f"{lexicon[lemma]!r} and {sign['gloss']!r} in curriculum.yaml -- "
+                    f"no silent tie-break exists; rename one entry's english_lemmas")
             lexicon[lemma] = sign["gloss"]
-    lexicon.update(_SUPPLEMENTARY_LEXICON)
+    for lemma, gloss in _SUPPLEMENTARY_LEXICON.items():
+        if lemma in lexicon and lexicon[lemma] != gloss:
+            raise ValueError(
+                f"_SUPPLEMENTARY_LEXICON entry {lemma!r} -> {gloss!r} conflicts with "
+                f"curriculum.yaml's own mapping {lemma!r} -> {lexicon[lemma]!r}")
+        lexicon[lemma] = gloss
     # _merged_tokens replaces a matched _PHRASES key with its COMBINED value
     # (e.g. "thank"+"you" -> "thank_you") before lexicalize() ever looks it
     # up -- that combined value is already the target gloss id, not an
@@ -307,7 +338,7 @@ class GlossRuleEngine:
         for tok in doc:
             if tok.dep_ in _OUT_OF_SCOPE_DEPS:
                 problems.append(f"{tok.dep_} ('{tok.text}')")
-            elif tok.dep_ == "conj" and tok.pos_ == "VERB":
+            elif tok.dep_ == "conj" and tok.pos_ in _CLAUSE_HEAD_POS:
                 problems.append(f"clause coordination ('{tok.text}')")
         return problems
 
