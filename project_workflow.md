@@ -152,8 +152,29 @@ passes:
 - `src/aslcv/dataset.py`: yields `(pose_sequence, id_gloss, phonological_features,
   signer_id)` per split, plus a lazy-torch fixed-length Dataset + label encoder.
 
-**Phase 5b** (production track) — gloss rule engine built
-(`src/aslcv/production/gloss_rules.py`) with its regression test; no data dependency.
+**Phase 5b** (production track) — gloss rule engine built and substantially
+hardened toward the settled interface (`src/aslcv/production/gloss_rules.py`);
+no data dependency. spaCy (`en_core_web_sm`) now drives POS/dependency/lemma
+analysis (previously absent); `GlossSequence` carries `in_scope`/`confidence`/
+`reason`/`trace`, and out-of-scope input (unknown vocabulary, unsupported
+constructions — relative clauses, `advcl`/`ccomp`, passive voice, clause
+coordination) is refused rather than soft-flagged, closing the fail-closed gap
+this phase's own design calls non-negotiable. The lexicon is now derived from
+`curriculum.yaml`'s `english_lemmas` rather than hand-typed, with an
+import-time self-check that every emittable gloss resolves to a real
+curriculum sign. Three tools sit on top of the engine: `scripts/gloss_repl.py`
+(interactive discovery REPL — spaCy parse + full `GlossSequence` + `:why`
+trace), `tests/test_gloss_rules_corpus.py` (the golden corpus this phase's
+design calls for — mechanical properties asserted hard, ASL-judgment cases
+collected as `PENDING_CASES` that report rather than assert, pending fluent
+Deaf review), and `scripts/compose_sentence.py` (text-only composer: english →
+GlossSequence → per-gloss `asllex_code` → cached reference clip lookup →
+ordered playback plan — the pre-Phase-5a pipeline check, no video). Still
+missing from the settled 5b design: the ruleset itself is still Python control
+flow, not the declarative reviewable rule *data* (`rules/`) the design calls
+for; no verb-class agreement tag; no actual Deaf review has happened yet (the
+corpus's `PENDING_CASES` exist specifically to make that gap visible, not to
+paper over it).
 
 **Phase 2** (thin vertical slice, on the 20-sign subset below) — DONE, plus a full
 post-milestone experiment sweep. `normalizer/shoulder.py`, `features.py`, a DTW
@@ -533,7 +554,7 @@ The instructor's eye. Not a classifier.
 and cached pose sequence. Serves both "show correct form" and "compose grading
 target." Retrieval, never generation. *(Blocked on the ASL Citizen download.)*
 
-#### 5b — Gloss rule engine (underway; no data dependency)
+#### 5b — Gloss rule engine (engine + tooling built; no data dependency; Deaf review still pending)
 
 **Don't start from a blank file.** Adapt Moryossef et al.'s open-source
 text-to-gloss-to-pose-to-video baseline (arXiv 2305.17714): spaCy for lemmatization,
@@ -580,10 +601,23 @@ validator** — out-of-scope → discard and regenerate. In production the engin
 never faces input it can't handle. The out-of-scope detector is a first-class
 component, not an afterthought.
 
-**Golden test corpus.** A regression set of `(English → expected gloss + NMM)` pairs,
-one or more per rule/construction, ideally reviewed by fluent signers. Adding a rule
-must not silently break another. Version the rules and the lexicon; both evolve under
-review.
+**Golden test corpus — built, partially reviewed by construction.**
+`tests/test_gloss_rules_corpus.py` covers every `constructions_v2` entry plus
+fail-closed/edge cases, but splits assertions into two tiers rather than
+treating the whole corpus as signed-off: MECHANICAL properties (drop rules,
+time-fronting, wh/yes-no NMM scope + span, fail-closed refusal + reason
+populated, determinism, lexicon resolution) are asserted hard, since they
+follow from the engine's own stated rules regardless of ASL fluency. Whole-
+sentence word-order/NMM-placement correctness — the thing that actually needs
+a fluent signer — lives in a `PENDING_CASES` list that only *reports* the
+engine's output (`pytest.skip()` with the actual gloss sequence in the skip
+reason), never asserts it as correct. A case is promoted from pending to a
+real regression by a fluent reviewer setting `reviewed=True` and filling in
+`expected_glosses`/`expected_nmm` — a flag flip, not a rewrite, so review
+capacity is the only thing gating how much of the corpus becomes load-bearing.
+Adding a rule still must not silently break another; the mechanical tier is
+what currently catches that. Rules and lexicon are versioned together via
+`curriculum.yaml`, not yet separately.
 
 **In scope:** declaratives, yes/no questions (brow-raise), wh-questions
 (brow-furrow), negation (headshake), time-fronting, basic topic-comment, function-word
@@ -617,6 +651,16 @@ than chasing broad English coverage early.
 - **Done when:** a constrained sentence yields a correct gloss ordering + NMM tags +
   composed target, out-of-scope input is refused rather than guessed at, and the
   reference clips play in the right order.
+- **Status:** the gloss-ordering + NMM-tagging + fail-closed refusal half is
+  built and mechanically tested (`gloss_rules.py`); `scripts/compose_sentence.py`
+  proves every gloss resolves end to end to a real cached clip (all 60
+  curriculum signs are cached across all 4 extractors, so nothing is
+  currently retrieval-blocked). **Not yet done:** actual video concatenation
+  (still Phase 5a, blocked on nothing but hasn't been started), and — the
+  part that actually gates calling this phase complete — no fluent Deaf
+  reviewer has signed off on word order/NMM placement yet; that's exactly
+  what `PENDING_CASES` above is scaffolded to make undeniable rather than
+  quietly assumed.
 
 #### 5c — Templates (later; a robustness upgrade, not a replacement)
 
@@ -704,10 +748,15 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                         #   feature pipeline identically + prints the resolved config each run
       grading/         # Phase 4 — embedding + phonological heads + DTW (NEXT)
       production/      # Phase 5
-        gloss_rules.py #   5b — gloss + NMM rule engine (BUILT)
+        gloss_rules.py #   5b — spaCy-backed, fail-closed gloss + NMM rule engine
+                       #   (BUILT + hardened: curriculum-derived lexicon, in_scope/
+                       #   confidence/reason/trace, out-of-scope construction
+                       #   detection via dependency labels)
         retrieval.py   #   5a — id_gloss → reference clip + pose sequence (later)
-        rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data)
-        lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags
+        rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data;
+                       #   still Python control flow today, not yet extracted here)
+        lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags (currently
+                       #   lives inline in gloss_rules.py, built from curriculum.yaml)
         templates/     #   5c — correct-by-construction generation (later)
       learner/         # Phase 6 — learner model + adaptive engine
       generator/       # Phase 6 — drills, contrastive pairs, sentence prompts
@@ -717,11 +766,16 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   (DTW top-1/top-5 on the val slice), live_demo.py (webcam + --selftest),
                        #   eval_minimal_pairs.py (contrastive-pair confusability × 4 extractors,
                        #   by parameter; --full-curriculum for 60-way), measure_motion_energy.py
-                       #   (rest-frame diagnostic), verify_vitpose_topology.py
+                       #   (rest-frame diagnostic), verify_vitpose_topology.py,
+                       #   gloss_repl.py (5b interactive discovery REPL), compose_sentence.py
+                       #   (5b text-only end-to-end composer: english → gloss → cached clip plan)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
     app/               # Phase 6 — the loop, feedback presenter (LLM English only)
     tests/
-      golden/          # 5b — (English → expected gloss + NMM) regression corpus
+      test_gloss_rules.py         # 5b — engine's own mechanical regression tests
+      test_gloss_rules_corpus.py  # 5b — golden corpus: mechanical properties asserted
+                                   #   hard; ASL-judgment-pending cases in PENDING_CASES
+                                   #   report only (pytest.skip), promoted by review flag
     data/              # gitignored
       ASL_LEX/         # DONE — phonological features + ID-gloss keys
       ASL_Citizen/     # DONE — videos + official splits
