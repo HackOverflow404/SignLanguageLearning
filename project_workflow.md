@@ -158,23 +158,48 @@ no data dependency. spaCy (`en_core_web_sm`) now drives POS/dependency/lemma
 analysis (previously absent); `GlossSequence` carries `in_scope`/`confidence`/
 `reason`/`trace`, and out-of-scope input (unknown vocabulary, unsupported
 constructions — relative clauses, `advcl`/`ccomp`, passive voice, clause
-coordination) is refused rather than soft-flagged, closing the fail-closed gap
-this phase's own design calls non-negotiable. The lexicon is now derived from
-`curriculum.yaml`'s `english_lemmas` rather than hand-typed, with an
-import-time self-check that every emittable gloss resolves to a real
-curriculum sign. Three tools sit on top of the engine: `scripts/gloss_repl.py`
-(interactive discovery REPL — spaCy parse + full `GlossSequence` + `:why`
-trace), `tests/test_gloss_rules_corpus.py` (the golden corpus this phase's
-design calls for — mechanical properties asserted hard, ASL-judgment cases
-collected as `PENDING_CASES` that report rather than assert, pending fluent
-Deaf review), and `scripts/compose_sentence.py` (text-only composer: english →
-GlossSequence → per-gloss `asllex_code` → cached reference clip lookup →
-ordered playback plan — the pre-Phase-5a pipeline check, no video). Still
-missing from the settled 5b design: the ruleset itself is still Python control
-flow, not the declarative reviewable rule *data* (`rules/`) the design calls
-for; no verb-class agreement tag; no actual Deaf review has happened yet (the
-corpus's `PENDING_CASES` exist specifically to make that gap visible, not to
-paper over it).
+coordination whether VERB- or AUX-headed) is refused rather than soft-flagged,
+closing the fail-closed gap this phase's own design calls non-negotiable. The
+lexicon is now derived from `curriculum.yaml`'s `english_lemmas` rather than
+hand-typed, fails closed at **import time** on any ambiguous lemma (one
+English word claimed by two different glosses, from curriculum or the
+supplementary table), with a self-check that every emittable gloss resolves to
+a real curriculum sign. A dedicated fail-closed probing pass
+(`PHASE5B_GAP_REPORT.md`) went looking for edge cases the golden corpus didn't
+yet cover — partial-scope sentences, ambiguous lexicon hits, wh-word-as-
+relative-pronoun vs. genuine wh-question, and multi-clause/conjoined input —
+and found two real gaps (the AUX-headed coordination case above, and the
+ambiguous-lexicon guard), both now fixed and regression-tested; the other two
+categories were already handled correctly and are now pinned as regressions.
+Four tools sit on top of the engine:
+- **`scripts/gloss_repl.py`** — interactive discovery REPL: spaCy parse + full
+  `GlossSequence` + `:why` trace.
+- **`tests/test_gloss_rules_corpus.py`** — the golden corpus this phase's
+  design calls for. Mechanical properties (drop rules, time-fronting,
+  wh/yes-no NMM scope, fail-closed refusal + the harder probes above,
+  determinism, lexicon resolution) asserted hard; ASL-judgment cases collected
+  as `PENDING_CASES` that report rather than assert, pending fluent Deaf
+  review.
+- **`scripts/compose_sentence.py`** — text-only composer: english →
+  `GlossSequence` → per-gloss `asllex_code` → cached reference clip lookup →
+  ordered playback plan — the pre-Phase-5a pipeline check, no video.
+- **`scripts/export_review_sheet.py`** — generates a self-contained HTML file
+  (`data/review/gloss_review_sheet.html`, gitignored) so Deaf review of every
+  `PENDING_CASES` entry and every `constructions_v2` construction is a
+  one-sitting task: embedded reference clips per gloss, NMM tag spans rendered
+  visually, a plain-language restatement of the `:why` trace, and a verdict
+  form (correct/wrong-order/wrong-nmm/other + comment) persisted to
+  localStorage and exportable to JSON/Markdown. This is the artifact that
+  unblocks flipping `reviewed=True` on `PENDING_CASES` — it presents only and
+  asserts nothing about ASL correctness itself, since neither the codebase nor
+  its author can make that call.
+
+Still missing from the settled 5b design: the ruleset itself is still Python
+control flow, not the declarative reviewable rule *data* (`rules/`) the design
+calls for; no verb-class agreement tag; no actual Deaf review has happened yet
+(the corpus's `PENDING_CASES` and the new review-sheet export exist
+specifically to make that gap visible and easy to close, not to paper over
+it).
 
 **Phase 2** (thin vertical slice, on the 20-sign subset below) — DONE, plus a full
 post-milestone experiment sweep. `normalizer/shoulder.py`, `features.py`, a DTW
@@ -652,15 +677,21 @@ than chasing broad English coverage early.
   composed target, out-of-scope input is refused rather than guessed at, and the
   reference clips play in the right order.
 - **Status:** the gloss-ordering + NMM-tagging + fail-closed refusal half is
-  built and mechanically tested (`gloss_rules.py`); `scripts/compose_sentence.py`
-  proves every gloss resolves end to end to a real cached clip (all 60
-  curriculum signs are cached across all 4 extractors, so nothing is
-  currently retrieval-blocked). **Not yet done:** actual video concatenation
-  (still Phase 5a, blocked on nothing but hasn't been started), and — the
-  part that actually gates calling this phase complete — no fluent Deaf
-  reviewer has signed off on word order/NMM placement yet; that's exactly
-  what `PENDING_CASES` above is scaffolded to make undeniable rather than
-  quietly assumed.
+  built and mechanically tested (`gloss_rules.py`), and hardened by a
+  dedicated fail-closed probing pass (`PHASE5B_GAP_REPORT.md`) that found and
+  fixed two real gaps (AUX-headed clause coordination, ambiguous-lexicon
+  entries) rather than leaving them as known limitations.
+  `scripts/compose_sentence.py` proves every gloss resolves end to end to a
+  real cached clip (all 60 curriculum signs are cached across all 4
+  extractors, so nothing is currently retrieval-blocked), and
+  `scripts/export_review_sheet.py` packages every case that needs a fluent
+  signer's judgment into a one-file HTML sheet with embedded clips and a
+  verdict form. **Not yet done:** actual video concatenation (still Phase 5a,
+  blocked on nothing but hasn't been started), and — the part that actually
+  gates calling this phase complete — no fluent Deaf reviewer has actually
+  opened the review sheet and signed off on word order/NMM placement yet;
+  that's exactly what `PENDING_CASES` + the export script are scaffolded to
+  make undeniable rather than quietly assumed.
 
 #### 5c — Templates (later; a robustness upgrade, not a replacement)
 
@@ -749,9 +780,11 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
       grading/         # Phase 4 — embedding + phonological heads + DTW (NEXT)
       production/      # Phase 5
         gloss_rules.py #   5b — spaCy-backed, fail-closed gloss + NMM rule engine
-                       #   (BUILT + hardened: curriculum-derived lexicon, in_scope/
+                       #   (BUILT + hardened: curriculum-derived lexicon that fails
+                       #   closed on ambiguous lemmas at import time, in_scope/
                        #   confidence/reason/trace, out-of-scope construction
-                       #   detection via dependency labels)
+                       #   detection via dependency labels incl. AUX-headed clause
+                       #   coordination)
         retrieval.py   #   5a — id_gloss → reference clip + pose sequence (later)
         rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data;
                        #   still Python control flow today, not yet extracted here)
@@ -768,15 +801,24 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   by parameter; --full-curriculum for 60-way), measure_motion_energy.py
                        #   (rest-frame diagnostic), verify_vitpose_topology.py,
                        #   gloss_repl.py (5b interactive discovery REPL), compose_sentence.py
-                       #   (5b text-only end-to-end composer: english → gloss → cached clip plan)
+                       #   (5b text-only end-to-end composer: english → gloss → cached clip plan),
+                       #   export_review_sheet.py (5b: PENDING_CASES + constructions_v2 →
+                       #   one-file HTML Deaf review sheet, embedded clips + verdict form)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
     app/               # Phase 6 — the loop, feedback presenter (LLM English only)
     tests/
       test_gloss_rules.py         # 5b — engine's own mechanical regression tests
       test_gloss_rules_corpus.py  # 5b — golden corpus: mechanical properties asserted
-                                   #   hard; ASL-judgment-pending cases in PENDING_CASES
-                                   #   report only (pytest.skip), promoted by review flag
+                                   #   hard (incl. hardened fail-closed probes: partial-
+                                   #   scope, ambiguous lexicon, wh-relative-vs-question,
+                                   #   AUX-headed clause coordination); ASL-judgment-pending
+                                   #   cases in PENDING_CASES report only (pytest.skip),
+                                   #   promoted by review flag
     data/              # gitignored
       ASL_LEX/         # DONE — phonological features + ID-gloss keys
       ASL_Citizen/     # DONE — videos + official splits
       manifest.csv, phonology.csv, cache/{extractor}/*.npz   # DONE — Phase 1 outputs
+      review/gloss_review_sheet.html  # generated by export_review_sheet.py, not committed
+    PHASE5B_GAP_REPORT.md  # DONE — write-up of the fail-closed probing pass: what was
+                       #   checked, which 2 of 4 categories exposed real gaps, how each
+                       #   was fixed (not just flagged)
