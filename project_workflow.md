@@ -3,14 +3,20 @@
 The definitive plan. Supersedes the older workflow (which described a
 MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 
-> **Rev note (this pass):** Phase 2 is DONE **and its post-milestone experiment
-> sweep is done too** — so the headline number has moved well past the 32.5% first
-> recorded. Current best on the 20-sign val split (held-out signers, training-free
-> DTW, still a floor not a target): **MediaPipe 66.2% top-1 / 95.0% top-5** with
-> rest-frame trimming on; 48.8% / 80.0% without trim; DWPose 32.5% / 70.0%. The four
-> experiments that produced this — and, more importantly, told us *which* levers
-> carry signal — are summarized in "Phase 2 — post-milestone findings" below. The
-> short version:
+> **Rev note (latest pass):** Phase 4 (the learned grader) is now DONE and beats the
+> DTW baseline decisively: **81.2% top-1 / 96.5% top-5** on the 60-sign val split
+> (229 clips), vs. the DTW baseline's 31.9% / 64.2% re-measured on that SAME split.
+> Full writeup in "Phase 4" below and `PHASE4_REPORT.md`. The rest of this note is
+> the still-accurate Phase 2 history (training-free DTW was always a *floor*, not
+> the target — Phase 4 is what closed the gap the bullets below describe):
+>
+> Phase 2 is DONE **and its post-milestone experiment sweep is done too** — so the
+> headline number has moved well past the 32.5% first recorded. Current best on the
+> 20-sign val split (held-out signers, training-free DTW, still a floor not a
+> target): **MediaPipe 66.2% top-1 / 95.0% top-5** with rest-frame trimming on;
+> 48.8% / 80.0% without trim; DWPose 32.5% / 70.0%. The four experiments that
+> produced this — and, more importantly, told us *which* levers carry signal — are
+> summarized in "Phase 2 — post-milestone findings" below. The short version:
 > - **MediaPipe genuinely beats the three rtmlib backends** on minimal-pair
 >   separation (father/mother 11–15% confusion vs 36–41%), and the edge is *real
 >   keypoint quality*, not an artifact — ~90% of it survives binarizing the
@@ -31,7 +37,9 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 > - **`repeated` is the hardest phonological parameter** (38–54% confusion in every
 >   backend's own column) — the one parameter-ranking claim the data supports, and a
 >   direct instruction for Phase 4 (it's a *temporal* property DTW length-normalizes
->   away; needs an explicit tempo/periodicity feature).
+>   away; needs an explicit tempo/periodicity feature). **Acted on**: Phase 4's
+>   `repeated_movement` head reads an explicit FFT-autocorrelation tempo feature and
+>   reaches 82.1% val accuracy — no longer the clear weak point.
 > - Cache-integrity scare resolved (rtmlib only ever ran IMAGE mode; confirmed clean
 >   across all 1,874 clips × 4 extractors — no re-extraction). `Skeleton` gained a
 >   `regions` field (meaning-based group selection); legs/feet dropped by default;
@@ -40,10 +48,12 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 >   each `.npz`; the rtmlib `process_every_n_frames` default is 1 with a hard-error
 >   guard against the VIDEO+n>1 combination. Full suite: **84/84 green**, `make test`.
 >
-> **Next is Phase 4** (the learned grader), not Phase 3. The Phase-3 sweep's core
-> question — which extractor — is effectively answered (MediaPipe), so Phase 3
-> narrows to a couple of specific, cheap ablations noted in its section rather than a
-> full grid. See "Phase 3 — status" below.
+> Phase 3's core question — which extractor — is effectively answered (MediaPipe), so
+> it stays narrowed to a couple of specific, cheap ablations noted in its section
+> rather than a full grid (see "Phase 3 — status" below). With Phase 4 also done, the
+> recognition track (Phases 1-4) has nothing left blocking it; what's open is Phase 5a
+> (reference retrieval, not started), actual fluent Deaf review of Phase 5b's engine
+> output, and Phase 6 (the adaptive loop).
 
 ## Terminology
 
@@ -211,9 +221,14 @@ not a target): **MediaPipe 66.2% top-1 / 95.0% top-5** with rest-frame trimming;
 comparison, rest-frame trimming, depth proxies, the `repeated` parameter — are in
 "Phase 2 — post-milestone findings" below.
 
-**Next: Phase 4** — the learned grader (embedding + phonological heads). Phase 3's
-central question (which extractor) is effectively settled — MediaPipe — so Phase 3
-shrinks to two specific cheap ablations rather than a full grid (see Phase 3 status).
+**Phase 4 is now DONE** — the learned grader (embedding + phonological heads), trained
+on the full 60-sign curriculum, beats the DTW baseline decisively (81.2% top-1 / 96.5%
+top-5 vs. DTW's 31.9% / 64.2%, same 60-sign val split) and demonstrates real
+per-parameter head independence on a genuine minimal pair. Full writeup in "Phase 4"
+below and `PHASE4_REPORT.md`. Phase 3's central question (which extractor) is
+effectively settled — MediaPipe — so Phase 3 remains shrunk to two specific cheap
+ablations rather than a full grid (see Phase 3 status); nothing on the recognition
+track blocks moving to Phase 5a (reference retrieval, not started) or Phase 6.
 
 ---
 
@@ -546,32 +561,101 @@ local-hand block sharpens.
 > everything else in this project. Run the cheap screen, pick a survivor, move on.
 > Don't let extractor selection balloon.
 
-### Phase 4 — Grading & diagnosis engine (the real grader)
+### Phase 4 — Grading & diagnosis engine (the real grader) — DONE
 
 The instructor's eye. Not a classifier.
 
-- **Embedding + distance, never argmax classification.** A learner's attempt is
-  often not any valid sign, and an N-way classifier would confidently mislabel it.
-  So the model learns a **sign embedding** graded by distance to the target's
-  reference (the same framing ASL Citizen itself uses — dictionary retrieval,
-  recall@k), which degrades gracefully on malformed input.
-- **Phonological feature heads** (handshape, location, movement, orientation)
-  trained on the ASL-LEX labels from Phase 1, so feedback degrades *informatively*
-  ("handshape right, location wrong"). Read the block slices from `features.py`
-  accordingly — handshape head off the local-hand slice, location head off the
-  global slice.
-- **DTW alignment** between the learner's attempt and the target reference sequence
-  for timing/fidelity.
-- Collect a small set of deliberately wrong attempts to calibrate the "how wrong,
-  along which parameter" thresholds (the data task everyone skips).
-- **Exclude the 6 multi-morphemic signs from parameter-level feedback** (or annotate
-  their full form): ASL-LEX codes only their first morpheme, so a parameter head
-  would diagnose the whole sign against a partial label. `join_phonology.py` already
-  flags them.
-- **Produces:** given `(attempt, target_sign)` → per-parameter correctness + overall
-  fidelity + which parameters are off.
+- **Embedding + distance, never argmax classification — DONE, structurally, not just
+  by convention.** `src/aslcv/grading/embedding_model.py`'s `PoseGraderNet` trains its
+  primary embedding with **batch-hard triplet loss** between real clip embeddings — no
+  learned per-class weight vector anywhere in that path (ArcFace/CosFace-style margin
+  losses were considered and rejected for exactly this reason: they DO use one).
+  `EmbeddingGrader.grade_against(attempt, target_sign)` grades by nearest-reference-clip
+  embedding distance (same `agg="min"` convention as `DTWGrader`), degrading gracefully
+  on a malformed attempt instead of forcing a confident closed-set label.
+- **Phonological feature heads — DONE, and proven genuinely separable, not just
+  co-firing.** Five heads (handshape, major_location, minor_location, movement,
+  repeated_movement) trained on the ASL-LEX labels from Phase 1. The risk named at
+  design time — a shared bottleneck letting heads silently agree instead of
+  diagnosing independently — is closed by construction: `PoseGraderNet` is a
+  **multi-stream** encoder, not one shared trunk. A `global_encoder` (BiGRU) sees
+  only the global block (location + movement); a weight-shared `hand_encoder` sees
+  only the hand blocks (combined order-invariantly via elementwise max — ASL has no
+  fixed dominant side, so a positional left/right concat would leak signer handedness
+  into the handshape head). Each head reads only its relevant stream's output, so
+  there is literally no gradient path from e.g. `handshape_head` into
+  `global_encoder`'s parameters — proven by backprop in
+  `tests/test_embedding_model.py::test_heads_are_structurally_disjoint`, not just
+  observed as an accuracy correlation. Demonstrated on a REAL attempt, not synthetic
+  data: grading a real `father` clip against `mother` as target (the curriculum's
+  built-in minimal pair, differing ONLY in `minor_location`) — handshape,
+  major_location, movement, and repeated_movement all correctly MATCH, and only
+  `minor_location` disagrees, pinned as a regression
+  (`test_embedding_grader.py::test_heads_disagree_independently_on_a_real_minimal_pair`).
+- **An explicit tempo feature for `repeated` — DONE.** The one well-supported Phase 2
+  finding was that `repeated` is hardest because it's a temporal/cyclic property DTW's
+  length-normalization smears. `movement_head`/`repeated_head` read the global stream
+  PLUS a 2-scalar FFT-autocorrelation feature computed from `hand_motion_energy()`
+  (unchanged, shared with the live-demo segmenter) — peak lag and peak height, giving
+  the periodicity signal geometry-only features never had. Measured effect:
+  `repeated_movement` reaches 82.1% val accuracy (well-supported classes), no longer
+  the clear weak point DTW made it.
+- **Trained on the full 60-sign curriculum, not the 20-sign Phase 2 slice** — a
+  deliberate dataset decision, not an oversight: per-parameter label coverage is far
+  better at 60 signs (`repeated_movement` 30/30 balanced vs. 16/4 skewed in-slice;
+  handshape 20 vs 14 classes; minor_location 14 vs 9 — `movement` and `repeated` have
+  almost no minimal pairs at all in the 20-slice per known issue #5). This is what
+  "did it work" means for this phase: generalizing across all 60 signs' phonological
+  classes on the official signer-independent splits (895/229/750 train/val/test),
+  never re-split.
+- **The minimum-support gate — a real thin-data problem, decided explicitly, not
+  papered over.** Several label values are carried by only 1-2 of the 60 signs (9 of
+  20 handshape classes, major_location's `Arm`, 4 of 14 minor_location classes) — a
+  head cannot be shown to generalize for those vs. memorizing the one sign that
+  carries the value. Decision (made with explicit sign-off before training): train
+  every head on ALL classes as-is, but gate what's SHOWN at inference —
+  `phonology_labels.py`'s `MIN_SUPPORT = 3` — so a verdict for an under-supported
+  label value reports `correct=None` ("insufficient data"), never a confident
+  right/wrong. Val accuracy is reported split by well-supported vs. thin classes,
+  never blended into one number that would overstate confidence
+  (`tests/test_embedding_grader.py::test_thin_class_verdict_is_gated_regardless_of_model_output`
+  pins the gate itself against the real trained grader, independent of model quality).
+- **Overfitting — the main predicted risk, real, and reported plainly.**
+  `scripts/train_embedding_grader.py` reports TRAIN (leave-one-out nearest-clip
+  ranking, so it's not trivially self-matching) AND VAL every epoch. Train top-1
+  saturates to 100% well before val does on ~15 clips/sign — the gap is real (~20pp
+  at the end of training) and is not hidden: the **best-val-top1 checkpoint is saved
+  separately from the final epoch** (`model_best.pt` vs `model_final.pt`) precisely
+  so a plateauing-then-drifting val curve can't silently ship whatever the last epoch
+  happened to land on. `models/embedding_grader/history.json` has the full per-epoch
+  curve (gitignored, like all of `models/`).
+- **Exclude the 6 multi-morphemic signs from parameter-level feedback** — not yet
+  wired as an explicit exclusion in `EmbeddingGrader`; the phonology labels used are
+  ASL-LEX's first-morpheme-only labels as joined in Phase 1 (`join_phonology.py`
+  already flags which 6 signs these are). Revisit if diagnosis quality on those 6
+  looks off in practice.
+- **Produces:** given `(attempt, target_sign)` → `GradeResult(fidelity,
+  parameters={param: ParameterVerdict(predicted, target, correct, support)})`.
 - **Done when:** a malformed attempt yields a specific diagnosis ("handshape right,
-  location too low"), not a confident wrong label.
+  location too low"), not a confident wrong label. **DONE** —
+  `scripts/eval_embedding_grader.py` / `PHASE4_REPORT.md`: on the 60-sign val split
+  (229 clips), the learned grader reaches **81.2% top-1 / 96.5% top-5**, beating the
+  re-measured DTW baseline's 31.9% / 64.2% on the SAME split (the old 66.2%/32.5%
+  Phase 2 milestone numbers were 20-slice-only and are not the comparison point here).
+  Per-parameter val accuracy (well-supported classes): handshape 80.7%,
+  major_location 88.4%, minor_location 85.9%, movement 84.5%, repeated_movement
+  82.1%.
+
+Two bugs found and fixed while building this (both verified empirically
+before/after, both regression-tested — see `CLAUDE.md`'s Known issues for the full
+writeup): a NaN-gradient bug in the triplet loss's distance function
+(`sqrt` at exactly zero distance has an infinite local gradient that autograd
+computes even for unselected diagonal entries, corrupting training from batch one —
+fixed with an epsilon floor before the square root), and a segfault in the full test
+suite caused by `onnxruntime-gpu`'s NVBLAS hook breaking torch's CPU RNN kernel when
+both are loaded in the same pytest process (fixed by running the Phase 4 model on
+CUDA in tests, not CPU — a real dependency-stack incompatibility in this
+environment, documented in `CLAUDE.md`'s Testing section).
 
 ### Phase 5 — Production track (parallel to Phases 1–4)
 
@@ -777,7 +861,17 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
       normalizer/      # DONE — ShoulderNormalizer (global + local-hand); BBox skipped as unsound
       pipeline_config.py # DONE — add_pipeline_args/build_pipeline: every script builds the
                         #   feature pipeline identically + prints the resolved config each run
-      grading/         # Phase 4 — embedding + phonological heads + DTW (NEXT)
+      grading/         # DONE — DTW baseline + Phase 4 EmbeddingGrader
+        dtw_grader.py  #   Phase 2 — training-free nearest-reference DTW (baseline)
+        phonology_labels.py # Phase 4 — per-parameter label vocab (sorted, curriculum-
+                       #   derived) + per-class support counts + MIN_SUPPORT gate
+        embedding_model.py  # Phase 4 — PoseGraderNet (multi-stream BiGRU encoder +
+                       #   5 disjoint-input phonological heads), batch_hard_triplet_loss
+        embedding_dataset.py # Phase 4 — in-memory Dataset (features + tempo feature +
+                       #   phonology labels per clip), PK batch sampler, collate_fn
+        embedding_grader.py  # Phase 4 — EmbeddingGrader (grade/grade_against mirroring
+                       #   DTWGrader's interface; grade_against also returns per-
+                       #   parameter ParameterVerdict gated by MIN_SUPPORT)
       production/      # Phase 5
         gloss_rules.py #   5b — spaCy-backed, fail-closed gloss + NMM rule engine
                        #   (BUILT + hardened: curriculum-derived lexicon that fails
@@ -803,10 +897,23 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   gloss_repl.py (5b interactive discovery REPL), compose_sentence.py
                        #   (5b text-only end-to-end composer: english → gloss → cached clip plan),
                        #   export_review_sheet.py (5b: PENDING_CASES + constructions_v2 →
-                       #   one-file HTML Deaf review sheet, embedded clips + verdict form)
+                       #   one-file HTML Deaf review sheet, embedded clips + verdict form),
+                       #   train_embedding_grader.py (Phase 4: PK-sampled triplet + multi-
+                       #   task head training on the 60-sign curriculum, reports train/val
+                       #   every epoch, saves best-val + final checkpoints), eval_embedding_
+                       #   grader.py (Phase 4: re-measures DTW on the 60-sign val split,
+                       #   compares to the learned grader, per-parameter accuracy report,
+                       #   mother/father head-independence demo -> PHASE4_REPORT.md)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
     app/               # Phase 6 — the loop, feedback presenter (LLM English only)
     tests/
+      test_embedding_model.py   # Phase 4 — architecture tests on synthetic tensors,
+                                 #   incl. test_heads_are_structurally_disjoint (backprop-
+                                 #   proves head independence, no checkpoint needed)
+      test_embedding_grader.py  # Phase 4 — phonology-gate unit tests (no checkpoint)
+                                 #   + checkpoint-gated EmbeddingGrader tests (skipped if
+                                 #   models/embedding_grader/model_best.pt is absent),
+                                 #   incl. the real mother/father disagreement regression
       test_gloss_rules.py         # 5b — engine's own mechanical regression tests
       test_gloss_rules_corpus.py  # 5b — golden corpus: mechanical properties asserted
                                    #   hard (incl. hardened fail-closed probes: partial-
@@ -818,6 +925,11 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
       ASL_LEX/         # DONE — phonological features + ID-gloss keys
       ASL_Citizen/     # DONE — videos + official splits
       manifest.csv, phonology.csv, cache/{extractor}/*.npz   # DONE — Phase 1 outputs
+    models/embedding_grader/  # gitignored — Phase 4 checkpoint (model_best.pt,
+                       #   model_final.pt, standardizer.npz, config.json, history.json),
+                       #   written by scripts/train_embedding_grader.py
+    PHASE4_REPORT.md   # DONE — Phase 4 eval report: learned vs DTW baseline, per-
+                       #   parameter val accuracy, mother/father disagreement demo
       review/gloss_review_sheet.html  # generated by export_review_sheet.py, not committed
     PHASE5B_GAP_REPORT.md  # DONE — write-up of the fail-closed probing pass: what was
                        #   checked, which 2 of 4 categories exposed real gaps, how each
