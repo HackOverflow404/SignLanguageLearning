@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
 from .. import dataset as dataset_mod
 from ..extractor.coco_wholebody import COCO_WHOLEBODY
@@ -80,6 +81,8 @@ class ParameterVerdict:
     target: str
     correct: "bool | None"
     support: int
+    confidence: float  # softmax (categorical) / sigmoid-distance-from-0.5 (repeated_movement)
+                        # probability of the PREDICTED value, regardless of correct/None
 
 
 @dataclass
@@ -160,11 +163,15 @@ class EmbeddingGrader:
     # -- embedding a single attempt clip --------------------------------------------
 
     @torch.no_grad()
-    def _forward_npz(self, npz_path) -> dict:
-        """Full model output (embed + every head's logits) for one cached clip."""
-        clip = self.pipeline.assemble_npz(npz_path)
+    def _forward_poses(self, poses) -> dict:
+        """Full model output (embed + every head's logits) for an IN-MEMORY sequence
+        of Pose objects -- the live/no-file entry point, mirroring how
+        FeaturePipeline.assemble() itself takes poses directly (assemble_npz is just
+        a convenience wrapper around it) and how DTWGrader.grade() takes an already-
+        assembled features array rather than requiring a cached npz. This is what
+        scripts/diagnose_demo.py's live sliding window grades against."""
+        clip = self.pipeline.assemble(poses)
         feats = self.standardizer.transform(clip.features)
-        poses = _load_poses_npz(npz_path)
         energy = hand_motion_energy(self.pipeline.normalizer, self.pipeline.skeleton, poses)
         tempo = _tempo_features(energy)
 
@@ -176,44 +183,69 @@ class EmbeddingGrader:
         out = self.model(features, lengths, tempo_t)
         return {k: v.squeeze(0).cpu() for k, v in out.items()}
 
+    @torch.no_grad()
+    def _forward_npz(self, npz_path) -> dict:
+        """Full model output for one CACHED clip -- loads poses from disk, then
+        shares the exact same forward path as the live in-memory case."""
+        return self._forward_poses(_load_poses_npz(npz_path))
+
     # -- grading ---------------------------------------------------------------------
 
     def _nearest_clip_distance(self, embed: torch.Tensor, sign: str) -> float:
         refs = self.references[sign]
         return float(torch.cdist(embed.unsqueeze(0), refs).min())
 
-    def grade(self, npz_path) -> list[tuple[str, float]]:
-        """Rank every sign by nearest-reference-clip embedding distance -- the
-        open-set path, secondary to grade_against (CLAUDE.md: the tutor always knows
-        the target it prompted, so grade_against is primary)."""
-        out = self._forward_npz(npz_path)
+    def _rank_out(self, out: dict) -> list[tuple[str, float]]:
         ranked = [(sign, self._nearest_clip_distance(out["embed"], sign)) for sign in self.signs]
         ranked.sort(key=lambda sd: sd[1])
         return ranked
 
-    def grade_against(self, npz_path, target_sign: str) -> GradeResult:
-        """Closed-set grading: distance to the KNOWN target sign, plus a per-parameter
-        diagnosis from the attempt's own head predictions vs. the target's true
-        phonology label (gated by phonology_labels.MIN_SUPPORT -- see ParameterVerdict)."""
+    def grade(self, npz_path) -> list[tuple[str, float]]:
+        """Rank every sign by nearest-reference-clip embedding distance -- the
+        open-set path, secondary to grade_against (CLAUDE.md: the tutor always knows
+        the target it prompted, so grade_against is primary)."""
+        return self._rank_out(self._forward_npz(npz_path))
+
+    def grade_poses(self, poses) -> list[tuple[str, float]]:
+        """Same as grade(), for an in-memory pose sequence (e.g. a live sliding window)."""
+        return self._rank_out(self._forward_poses(poses))
+
+    def _grade_against_out(self, out: dict, target_sign: str) -> GradeResult:
         if target_sign not in self.references:
             raise KeyError(f"unknown target sign {target_sign!r}; have {self.signs}")
-        out = self._forward_npz(npz_path)
         fidelity = self._nearest_clip_distance(out["embed"], target_sign)
 
         parameters: dict[str, ParameterVerdict] = {}
         for p in CATEGORICAL_PARAMETERS:
-            predicted = self.phon_labels.encoders[p].decode(int(out[p].argmax()))
+            probs = F.softmax(out[p], dim=0)
+            pred_idx = int(out[p].argmax())
+            predicted = self.phon_labels.encoders[p].decode(pred_idx)
+            confidence = float(probs[pred_idx])
             target_label = self.phon_labels.label_for(target_sign, p)
             support = self.phon_labels.support(p, target_label)
             correct = (predicted == target_label) if support >= MIN_SUPPORT else None
-            parameters[p] = ParameterVerdict(p, predicted, target_label, correct, support)
+            parameters[p] = ParameterVerdict(p, predicted, target_label, correct, support, confidence)
 
-        predicted_repeated = bool(out["repeated"] > 0)
+        repeated_prob = float(torch.sigmoid(out["repeated"]))
+        predicted_repeated = repeated_prob > 0.5
+        rep_confidence = repeated_prob if predicted_repeated else 1.0 - repeated_prob
         target_repeated = self.phon_labels.repeated_bool(target_sign)
         target_repeated_raw = "1" if target_repeated else "0"
         rep_support = self.phon_labels.support("repeated_movement", target_repeated_raw)
         rep_correct = (predicted_repeated == target_repeated) if rep_support >= MIN_SUPPORT else None
         parameters["repeated_movement"] = ParameterVerdict(
-            "repeated_movement", str(predicted_repeated), str(target_repeated), rep_correct, rep_support)
+            "repeated_movement", str(predicted_repeated), str(target_repeated),
+            rep_correct, rep_support, rep_confidence)
 
         return GradeResult(target_sign, fidelity, parameters)
+
+    def grade_against(self, npz_path, target_sign: str) -> GradeResult:
+        """Closed-set grading: distance to the KNOWN target sign, plus a per-parameter
+        diagnosis from the attempt's own head predictions vs. the target's true
+        phonology label (gated by phonology_labels.MIN_SUPPORT -- see ParameterVerdict)."""
+        return self._grade_against_out(self._forward_npz(npz_path), target_sign)
+
+    def grade_against_poses(self, poses, target_sign: str) -> GradeResult:
+        """Same as grade_against(), for an in-memory pose sequence (e.g. a live
+        sliding window) -- what scripts/diagnose_demo.py's live loop actually calls."""
+        return self._grade_against_out(self._forward_poses(poses), target_sign)

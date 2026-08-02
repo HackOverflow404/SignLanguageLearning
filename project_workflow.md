@@ -54,6 +54,18 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 > recognition track (Phases 1-4) has nothing left blocking it; what's open is Phase 5a
 > (reference retrieval, not started), actual fluent Deaf review of Phase 5b's engine
 > output, and Phase 6 (the adaptive loop).
+>
+> **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
+> `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
+> its real looping reference clip and see all 5 phonological heads' verdicts
+> (MATCH/OFF/insufficient-data + confidence) plus overall fidelity, not just a single
+> label. Reuses `live_demo.py`'s webcam/threading/pipeline scaffolding; the only
+> substantive changes are the grader (learned, not DTW) and the closed-set interface
+> (known target, not open-set "which sign"). Fails closed on a pipeline-config
+> mismatch against the checkpoint and on any cycle target lacking a cached reference
+> video. Verified via `--selftest` (reproduces `PHASE4_REPORT.md`'s mother/father
+> numbers exactly) — full writeup in "Phase 4" below. Built and verified but **not
+> yet committed**, pending explicit go-ahead.
 
 ## Terminology
 
@@ -657,6 +669,39 @@ both are loaded in the same pytest process (fixed by running the Phase 4 model o
 CUDA in tests, not CPU — a real dependency-stack incompatibility in this
 environment, documented in `CLAUDE.md`'s Testing section).
 
+**Live diagnostic demo — built, verified, not yet committed.**
+`scripts/diagnose_demo.py` puts `grade_against` in front of a webcam rather
+than only cached clips: prompt a target, play its real reference clip on
+loop next to the live view (mandatory — `resolve_targets()` refuses to start
+if any cycle target lacks a cached reference video), capture an attempt over
+a sliding window, and show all 5 heads' verdicts (MATCH/OFF/insufficient-data
++ confidence) plus overall fidelity every time — the per-parameter breakdown
+is the visual focus, not a single pass/fail. Deliberately reuses
+`live_demo.py`'s webcam loop, sliding window, mirrored-display-only handling,
+background-threaded grading, and `pipeline_config.py` wiring rather than
+rebuilding any of it; the only two substantive changes are the grader
+(learned, not DTW) and the interface (closed-set `grade_against` a known
+target, not open-set classification). `verify_pipeline_matches_checkpoint()`
+refuses to start (fail-closed) if the live feature pipeline built from CLI
+flags differs from the checkpoint's own training-time config in any field —
+a silent mismatch there would corrupt every verdict invisibly. `c` clears the
+window for a fresh attempt but keeps the last verdict visible (dimmed,
+marked stale) so a learner sees what changed between tries — deliberately
+different from `live_demo.py`'s `c`. A persistent on-screen line states the
+honest limit: this confirms plumbing and lets a learner imitate a real
+reference clip, it does not independently verify ASL correctness.
+`--selftest` runs the whole prompt → `grade_against_poses` → verdict path on
+cached val clips with no camera, and reproduces `PHASE4_REPORT.md`'s
+mother/father cross-check numbers exactly, confirming the new in-memory path
+behaves identically to the already-verified cached-file path. Required two
+small additive changes to `EmbeddingGrader` (no existing signature/behavior
+changed, full suite still green): `grade_poses`/`grade_against_poses` (an
+in-memory entry point for live frames, alongside the existing file-based
+`grade`/`grade_against`), and a `confidence` field on `ParameterVerdict`
+(already computed internally, now surfaced). **Not yet committed** —
+`src/aslcv/grading/embedding_grader.py`'s changes and the new script are
+both held back pending explicit go-ahead.
+
 ### Phase 5 — Production track (parallel to Phases 1–4)
 
 **5a Reference retrieval:** given an ID-gloss, fetch the real Deaf-signer clip(s)
@@ -871,7 +916,9 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   phonology labels per clip), PK batch sampler, collate_fn
         embedding_grader.py  # Phase 4 — EmbeddingGrader (grade/grade_against mirroring
                        #   DTWGrader's interface; grade_against also returns per-
-                       #   parameter ParameterVerdict gated by MIN_SUPPORT)
+                       #   parameter ParameterVerdict gated by MIN_SUPPORT, incl. a
+                       #   confidence field; grade_poses/grade_against_poses take
+                       #   in-memory frames for live use, uncommitted pending go-ahead)
       production/      # Phase 5
         gloss_rules.py #   5b — spaCy-backed, fail-closed gloss + NMM rule engine
                        #   (BUILT + hardened: curriculum-derived lexicon that fails
@@ -903,7 +950,11 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   every epoch, saves best-val + final checkpoints), eval_embedding_
                        #   grader.py (Phase 4: re-measures DTW on the 60-sign val split,
                        #   compares to the learned grader, per-parameter accuracy report,
-                       #   mother/father head-independence demo -> PHASE4_REPORT.md)
+                       #   mother/father head-independence demo -> PHASE4_REPORT.md),
+                       #   diagnose_demo.py (Phase 4: live webcam grade_against demo,
+                       #   reference clip loop + per-parameter verdicts + fail-closed
+                       #   guards + --selftest; built and verified, uncommitted pending
+                       #   go-ahead)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
     app/               # Phase 6 — the loop, feedback presenter (LLM English only)
     tests/
