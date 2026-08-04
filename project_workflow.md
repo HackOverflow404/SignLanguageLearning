@@ -50,10 +50,10 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 >
 > Phase 3's core question — which extractor — is effectively answered (MediaPipe), so
 > it stays narrowed to a couple of specific, cheap ablations noted in its section
-> rather than a full grid (see "Phase 3 — status" below). With Phase 4 also done, the
-> recognition track (Phases 1-4) has nothing left blocking it; what's open is Phase 5a
-> (reference retrieval, not started), actual fluent Deaf review of Phase 5b's engine
-> output, and Phase 6 (the adaptive loop).
+> rather than a full grid (see "Phase 3 — status" below). With Phase 4 and Phase 5a
+> also done, the recognition track (Phases 1-4) plus reference retrieval have nothing
+> left blocking them; what's open is actual fluent Deaf review of Phase 5b's engine
+> output, and Phase 6 (the adaptive loop, now genuinely unblocked).
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -64,8 +64,14 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 > (known target, not open-set "which sign"). Fails closed on a pipeline-config
 > mismatch against the checkpoint and on any cycle target lacking a cached reference
 > video. Verified via `--selftest` (reproduces `PHASE4_REPORT.md`'s mother/father
-> numbers exactly) — full writeup in "Phase 4" below. Built and verified but **not
-> yet committed**, pending explicit go-ahead.
+> numbers exactly) — full writeup in "Phase 4" below. Committed.
+>
+> **Phase 5a (reference retrieval)** is also now done: `src/aslcv/production/
+> retrieval.py`'s `fetch_reference`/`fetch_sequence` resolve a gloss or a whole
+> Phase 5b `GlossSequence` to real cached clips and hard-cut-concatenate them into
+> one playable video (trim-then-cut, no generative smoothing — see the Phase 5a
+> section below for the reasoning). Verified end to end on `"I want water."`; full
+> writeup below. Built and tested, **not yet committed**, pending explicit go-ahead.
 
 ## Terminology
 
@@ -240,7 +246,7 @@ per-parameter head independence on a genuine minimal pair. Full writeup in "Phas
 below and `PHASE4_REPORT.md`. Phase 3's central question (which extractor) is
 effectively settled — MediaPipe — so Phase 3 remains shrunk to two specific cheap
 ablations rather than a full grid (see Phase 3 status); nothing on the recognition
-track blocks moving to Phase 5a (reference retrieval, not started) or Phase 6.
+track blocks moving to Phase 6. Phase 5a (reference retrieval) is now done too.
 
 ---
 
@@ -704,9 +710,72 @@ both held back pending explicit go-ahead.
 
 ### Phase 5 — Production track (parallel to Phases 1–4)
 
-**5a Reference retrieval:** given an ID-gloss, fetch the real Deaf-signer clip(s)
-and cached pose sequence. Serves both "show correct form" and "compose grading
-target." Retrieval, never generation. *(Blocked on the ASL Citizen download.)*
+**5a Reference retrieval — DONE** (video retrieval + concatenation; a
+concatenated pose-sequence grading target is deliberately deferred, not
+dropped — see below). Given an ID-gloss or a Phase 5b `GlossSequence`, fetch
+the real reference clip(s). Retrieval, never generation. Wasn't blocked on
+anything — Phase 1 already downloaded ASL Citizen and cached all 60
+curriculum signs across all 4 extractors.
+
+Scope was narrowed from the original "show correct form" + "compose grading
+target" phrasing after two design questions surfaced discussing it:
+
+- **Only video concatenation is being built now; pose-sequence concatenation
+  (a multi-sign grading target) is deferred, not dropped.** Grading a live
+  continuous attempt against a concatenated pose target requires knowing where
+  one sign ends and the next begins *in that live attempt* — that's Phase 7's
+  unsolved continuous-recognition segmentation problem (see Phase 7 below).
+  Today's live pipeline has only Phase 2's manual fixed-window + keypress reset
+  (`c`), no automatic boundary detector. A pose-sequence target built now would
+  have no consumer until Phase 7 exists, so this isn't premature scoping —
+  it's literally unusable before then. Per-sign grading targets already exist
+  (Phase 4's `EmbeddingGrader`/`DTWGrader` reference banks).
+- **No generative model for smoothing stitched clip transitions.** Considered
+  and rejected: interpolating frames between two real clips to hide a hard cut
+  would fabricate motion no signer produced and present it as a model of
+  correct form — exactly the failure mode CLAUDE.md's "Retrieve reference
+  video, never generate it. Ever." rule exists to prevent. The accepted
+  approach instead: trim each clip's rest frames using the existing
+  `hand_motion_energy()`/`motion_active_span()` (`features.py`, shared with
+  Phase 2/6's segmentation — same default `motion_threshold`/
+  `motion_pad_frames`, no new tuning) and hard-cut directly between clips.
+  Visibly jump-cuts between signers; that's left honest, not hidden, matching
+  `scripts/compose_sentence.py`'s existing banner ("stitched citation clips,
+  not fluent connected signing").
+
+Built: `src/aslcv/production/retrieval.py`.
+- `fetch_reference(id_gloss, extractor) -> ReferenceClip` — one formalized
+  selection rule (prefer a train-split clip, else the first match) replacing
+  the same logic that used to be independently copy-pasted across
+  `render_clip.py`'s `pick_row`, `compose_sentence.py`'s `pick_clip`, and
+  `diagnose_demo.py`'s `reference_row`. Raises `KeyError` on a sign with no
+  manifest rows at all; returns `npz_path=None` (not an error) for a known
+  sign uncached under the requested extractor, leaving the fail-closed call
+  to callers that actually need a pose sequence.
+- `fetch_sequence(gloss_sequence, extractor) -> ComposedReference` — resolves
+  every gloss the same way `compose_sentence.py`'s STEP 2/3 already does, but
+  goes one step further than that script deliberately stopped short of: it
+  actually decodes, trims (`hand_motion_energy()`/`motion_active_span()`,
+  same defaults as `features.py`'s `trim_to_motion`), and hard-cuts the clips
+  into one ordered frame list. Fail-closed on three paths, all tested: an
+  out-of-scope `GlossSequence`, an empty one, and any gloss missing a cached
+  reference for the target extractor (same convention as `resolve_targets` in
+  `diagnose_demo.py`) — refuses rather than compose a partial video.
+  `write_composed_video()` writes a `ComposedReference` to a real `.mp4`,
+  kept separate since composing is cheap and a future caller (Phase 6's
+  presenter) may want the frames without paying for a disk write every time.
+
+**Verified end to end on real data**, not just unit-tested in isolation:
+`"I want water."` → gloss sequence `['me', 'want_2', 'water']` → 3 real
+ASL Citizen clips retrieved, each trimmed to its motion-active span, hard-cut
+together into a 94-frame playable mp4 (fps carried from the source clips).
+All three fail-closed paths confirmed to actually refuse (not just
+theoretically). `tests/test_retrieval.py` (12 tests) covers `fetch_reference`
+determinism/fallback/unknown-sign, `fetch_sequence`'s ordering/trimming/
+fail-closed behavior, and `write_composed_video`'s round-trip + empty-input
+refusal — full suite **214 passed, 10 skipped** (up from 202/10; nothing
+else broke). Built and tested this session; **not yet committed**, held back
+pending explicit go-ahead (same convention as `diagnose_demo.py` earlier).
 
 #### 5b — Gloss rule engine (engine + tooling built; no data dependency; Deaf review still pending)
 
@@ -815,10 +884,11 @@ than chasing broad English coverage early.
   extractors, so nothing is currently retrieval-blocked), and
   `scripts/export_review_sheet.py` packages every case that needs a fluent
   signer's judgment into a one-file HTML sheet with embedded clips and a
-  verdict form. **Not yet done:** actual video concatenation (still Phase 5a,
-  blocked on nothing but hasn't been started), and — the part that actually
-  gates calling this phase complete — no fluent Deaf reviewer has actually
-  opened the review sheet and signed off on word order/NMM placement yet;
+  verdict form. Actual video concatenation is now done too (Phase 5a's
+  `retrieval.fetch_sequence`, see Phase 5a above). **Not yet done** — the
+  part that actually gates calling this phase complete — no fluent Deaf
+  reviewer has actually opened the review sheet and signed off on word
+  order/NMM placement yet;
   that's exactly what `PENDING_CASES` + the export script are scaffolded to
   make undeniable rather than quietly assumed.
 
@@ -926,7 +996,12 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   confidence/reason/trace, out-of-scope construction
                        #   detection via dependency labels incl. AUX-headed clause
                        #   coordination)
-        retrieval.py   #   5a — id_gloss → reference clip + pose sequence (later)
+        retrieval.py   #   5a — DONE: fetch_reference (id_gloss -> real clip,
+                       #   one formalized selection rule) + fetch_sequence
+                       #   (GlossSequence -> trimmed, hard-cut, concatenated
+                       #   video; fail-closed) + write_composed_video. No
+                       #   pose-sequence concatenation (deferred to Phase 7 --
+                       #   see its module docstring). Uncommitted pending go-ahead.
         rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data;
                        #   still Python control flow today, not yet extracted here)
         lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags (currently

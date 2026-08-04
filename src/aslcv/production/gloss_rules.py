@@ -278,7 +278,9 @@ class GlossSequence:
 
     @property
     def gloss_ids(self) -> list[str]:
-        """Ordered asllex_ids — what Phase 5a concatenates into a pose target."""
+        """Ordered asllex_ids — what Phase 5a's retrieval.fetch_sequence resolves
+        to reference clips and concatenates (video; see retrieval.py's docstring
+        for why a pose-sequence target is deliberately not built from this)."""
         return [g.asllex_id for g in self.glosses]
 
     def render(self) -> str:
