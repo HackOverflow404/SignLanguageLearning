@@ -47,11 +47,20 @@ REPO = Path(__file__).resolve().parents[1]
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
-def build_extractor(name, running_mode):
+def build_extractor(name, running_mode, gpu=False):
     """(extractor, skeleton) for a backend. Live grading always uses mirrored=False
-    so positions/handedness match the non-flipped ASL Citizen references."""
+    so positions/handedness match the non-flipped ASL Citizen references.
+
+    `gpu` only affects mediapipe (the rtmlib backends already default to
+    device="cuda") and only changes which delegate MediaPipe's three
+    landmarkers request -- default False so behavior is unchanged unless
+    asked for (see MediaPipePoseExtractor's delegate docstring for the
+    measured ~3.3x speedup and the automatic CPU fallback if GPU isn't
+    actually usable on this machine)."""
     if name == "mediapipe":
-        return MediaPipePoseExtractor(mirrored=False, running_mode=running_mode), MEDIAPIPE_HOLISTIC
+        delegate = "gpu" if gpu else "cpu"
+        return (MediaPipePoseExtractor(mirrored=False, running_mode=running_mode, delegate=delegate),
+                MEDIAPIPE_HOLISTIC)
     if name in ("dwpose", "rtmw", "vitpose"):
         from importlib import import_module
         cls = {"dwpose": "DWPoseExtractor", "rtmw": "RTMWExtractor", "vitpose": "ViTPoseExtractor"}[name]
@@ -147,8 +156,9 @@ def run_live(args):
                 shared["ranked"] = ranked
                 shared["ms"] = (time.time() - t0) * 1000.0
 
-    print(f"opening camera {args.camera} in LIVE mode (extractor {args.extractor}) ...")
-    extractor, _ = build_extractor(args.extractor, RunningMode.LIVE)
+    print(f"opening camera {args.camera} in LIVE mode (extractor {args.extractor}"
+          f"{', gpu' if args.gpu else ''}) ...")
+    extractor, _ = build_extractor(args.extractor, RunningMode.LIVE, gpu=args.gpu)
     worker = threading.Thread(target=grade_loop, name="grader", daemon=True)
     worker.start()
 
@@ -252,6 +262,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--extractor", default="mediapipe",
                     choices=["mediapipe", "dwpose", "rtmw", "vitpose"])
+    ap.add_argument("--gpu", action="store_true",
+                    help="mediapipe only: request the GPU delegate (~3.3x faster, measured; "
+                         "falls back to CPU automatically if unavailable on this machine)")
     ap.add_argument("--camera", type=int, default=0, help="cv2 VideoCapture index")
     ap.add_argument("--window", type=int, default=60, help="sliding window length (frames)")
     ap.add_argument("--min-frames", type=int, default=20, help="frames needed before grading")

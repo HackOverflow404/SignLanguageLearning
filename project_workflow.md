@@ -27,13 +27,15 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 >   letting the shared rest regions compress every distance. BUT it only helps
 >   MediaPipe: MediaPipe runs VIDEO mode (temporal smoothing → true rest reads as
 >   still), the rtmlib backends run IMAGE mode (per-frame jitter → rest never trims).
->   So the 66-vs-32 gap now *conflates backend quality with running mode* — see the
->   confound note in Phase 3.
+>   So the 66-vs-32 gap *conflates backend quality with running mode* — investigated
+>   and closed in Phase 3 (rtmlib has no temporal smoothing to switch on; documented
+>   as a reporting caveat rather than chased with a new filter + re-extraction). The
+>   minimal-pair advantage below is unaffected and is the real basis for the pick.
 > - **Depth proxies (apparent hand size / arm foreshortening) did NOT help** the one
 >   pair they targeted (me/you, ~45% confusion either way): the raw signal doesn't
 >   separate that pair, and me/you are indexical/deictic signs that are out of scope
->   anyway. True z is now a *motivated* Phase 3 ablation rather than a hunch, but
->   likely not worth re-extraction for one out-of-scope pair.
+>   anyway. True z was considered as a targeted Phase 3 ablation and formally closed,
+>   not pursued (see Phase 3 status) — not worth re-extraction for one out-of-scope pair.
 > - **`repeated` is the hardest phonological parameter** (38–54% confusion in every
 >   backend's own column) — the one parameter-ranking claim the data supports, and a
 >   direct instruction for Phase 4 (it's a *temporal* property DTW length-normalizes
@@ -48,12 +50,13 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 >   each `.npz`; the rtmlib `process_every_n_frames` default is 1 with a hard-error
 >   guard against the VIDEO+n>1 combination. Full suite: **84/84 green**, `make test`.
 >
-> Phase 3's core question — which extractor — is effectively answered (MediaPipe), so
-> it stays narrowed to a couple of specific, cheap ablations noted in its section
-> rather than a full grid (see "Phase 3 — status" below). With Phase 4 and Phase 5a
-> also done, the recognition track (Phases 1-4) plus reference retrieval have nothing
-> left blocking them; what's open is actual fluent Deaf review of Phase 5b's engine
-> output, and Phase 6 (the adaptive loop, now genuinely unblocked).
+> Phase 3 is now fully DONE: the core question (which extractor) is answered
+> (MediaPipe), and both remaining loose ends are closed — the running-mode confound
+> is documented (not re-measured; rtmlib has no smoothing to switch on) and the true-z
+> ablation is formally decided not worth pursuing (see "Phase 3 — status" below). With
+> Phase 4 and Phase 5a also done, the recognition track (Phases 1-4) plus reference
+> retrieval have nothing left blocking them; what's open is actual fluent Deaf review
+> of Phase 5b's engine output, and Phase 6 (the adaptive loop, now genuinely unblocked).
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -243,10 +246,10 @@ comparison, rest-frame trimming, depth proxies, the `repeated` parameter — are
 on the full 60-sign curriculum, beats the DTW baseline decisively (81.2% top-1 / 96.5%
 top-5 vs. DTW's 31.9% / 64.2%, same 60-sign val split) and demonstrates real
 per-parameter head independence on a genuine minimal pair. Full writeup in "Phase 4"
-below and `PHASE4_REPORT.md`. Phase 3's central question (which extractor) is
-effectively settled — MediaPipe — so Phase 3 remains shrunk to two specific cheap
-ablations rather than a full grid (see Phase 3 status); nothing on the recognition
-track blocks moving to Phase 6. Phase 5a (reference retrieval) is now done too.
+below and `PHASE4_REPORT.md`. **Phase 3 is now fully DONE too** — the central
+question (which extractor) is settled (MediaPipe) and both loose ends are closed
+(see Phase 3 status); nothing on the recognition track blocks moving to Phase 6.
+Phase 5a (reference retrieval) is now done too.
 
 ---
 
@@ -447,8 +450,8 @@ applies to all of them:** 80 val clips ⇒ ~±11pp binomial error, and per-sign 
    doesn't separate the pair (me clips cluster 0.30–0.32, you clips scatter 0.19–0.39
    and overlap). And me/you are **indexical/deictic** signs — the spatial-grammar class
    scoped out of the project — so this pair may simply be a poor curriculum fit. True z
-   remains a possible Phase 3 ablation but is likely not worth re-extraction for one
-   out-of-scope pair.
+   was considered as a Phase 3 ablation and formally closed, not pursued — not worth
+   re-extraction for one out-of-scope pair (see Phase 3 status).
 
 4. **Parameter ranking — `repeated` is hardest.** From the 60-sign `--full-curriculum`
    run (real support this time: 40 handshape pairs, 14 major_location), `repeated`
@@ -466,30 +469,178 @@ absolute rates — the 60-way run uses leave-one-out to avoid this); and referen
 size differs between the 20-sign and 60-sign runs, so never compare rates across bank
 sizes.
 
-### Phase 3 — Benchmarking — status: mostly answered, narrowed to two ablations
+### Phase 3 — Benchmarking — status: DONE, all loose ends closed
 
 **The central Phase-3 question — which extractor — is effectively answered: MediaPipe**
-(see Phase 2 findings #1). So this is no longer a full grid to run; it's two specific
-loose ends, then move to Phase 4. Cache-integrity is resolved (rtmlib only ran IMAGE
-mode; clean across all 1,874 clips × 4 extractors).
+(see Phase 2 findings #1). Cache-integrity is resolved (rtmlib only ran IMAGE mode;
+clean across all 1,874 clips × 4 extractors).
 
-**Loose end A — the running-mode confound (do before canonizing "MediaPipe wins by
-34pts").** The 66-vs-32 gap conflates backend quality with running mode: rest-frame
-trimming (+17pp) only helps MediaPipe because it runs VIDEO mode with temporal
-smoothing, while the rtmlib backends run IMAGE mode. Two honest options: (a) re-run
-the rtmlib backends in a smoothed/tracked mode and re-measure, or (b) simply *state*
-that MediaPipe's default running mode is part of why it wins and stop there. The
-minimal-pair advantage (finding #1) is independent of trim and already favors
-MediaPipe, so this doesn't change the decision — it changes how the margin is
-reported. Cheap; worth doing before the number goes in a paper/README.
+**Loose end A — the running-mode confound — CLOSED, documented not re-measured.**
+The 66-vs-32 gap conflates backend quality with running mode: rest-frame trimming
+(+17pp) only helps MediaPipe because it runs VIDEO mode with temporal smoothing,
+while the rtmlib backends run IMAGE mode. Investigated re-measuring on equal footing
+(option (a), re-run the rtmlib backends in a "smoothed/tracked" mode) and found it
+isn't the cheap switch it looks like: checked `rtmlib` directly (`PoseTracker` and
+its `__call__`) and confirmed it has **no temporal keypoint smoothing at all** —
+`PoseTracker` only reuses the last frame's detector *bounding box* (IoU-based ID
+tracking) to skip re-running the person detector; it never filters or smooths the
+keypoints themselves. There is no rtmlib equivalent of MediaPipe's internal VIDEO-mode
+smoothing to flip on. Doing option (a) for real would mean writing a new temporal
+filter (e.g. a One Euro Filter) from scratch, re-extracting 1,874 clips × 3 rtmlib
+backends, and re-running `eval_minimal_pairs.py` — a new algorithmic component with
+its own design surface (filter choice, cutoff params), not a loose end anymore.
+**Decision: option (b)** — state the confound plainly rather than build a filter to
+chase it. The minimal-pair advantage (finding #1, the actual reason MediaPipe was
+picked) is independent of trim and already favors MediaPipe, so this doesn't change
+the extractor decision — it only changes how the 66-vs-32 trim margin should be
+read: **that number reflects MediaPipe's running mode as much as its keypoint
+quality, and should never be quoted as a pure backend-quality comparison.**
 
-**Loose end B — true z as a targeted ablation (optional, low priority).** Depth
-proxies didn't help me/you (finding #3). If revisited, the hypothesis is specific:
-"MediaPipe *with* its z channel reduces me/you confusion without hurting overall
-top-1." But me/you is one out-of-scope indexical pair, and z requires re-extracting
-MediaPipe (it currently discards the third coordinate at write time) and would break
-apples-to-apples with the 2D rtmlib backends — so likely not worth it. Recorded so the
-decision is deliberate, not forgotten.
+**Loose end B — true z as a targeted ablation — CLOSED, not pursued.** Depth
+proxies didn't help me/you (finding #3). The hypothesis would be specific ("MediaPipe
+*with* its z channel reduces me/you confusion without hurting overall top-1"), but
+me/you is one out-of-scope indexical pair, and z requires re-extracting MediaPipe (it
+currently discards the third coordinate at write time) and would break apples-to-apples
+with the 2D rtmlib backends. Formally decided not worth it — a deliberate closure,
+not a dangling TODO.
+
+**Loose end C — the real-time cheap screen — RUN, not just deferred.** Prompted by
+a direct question ("didn't we evaluate MediaPipe is better across the board?") that
+this doc's own wording didn't actually support: "which extractor" was answered on
+minimal-pair *accuracy* alone; the "cheap screen first ... real-time failures are
+out" filter below was never applied to the rtmlib backends at all — it wasn't a
+disqualification, it was simply untested. `scripts/benchmark_extractors.py` closes
+that (fresh timed inference on a 10-clip sample for FPS/latency, no reused numbers;
+`hand_motion_energy()`'s tracked-frame noise floor for jitter and each backend's
+already-computed `_manifest.csv` `hand_dropout_rate` for dropout — both reused from
+existing cached data, no new extraction needed for those two). Results on this
+machine (RTX 4070 laptop, `--n-clips 10 --seed 0`):
+
+| backend | fps | ms/frame | jitter floor (lower=steadier) | hand dropout (mean/p95, full dataset) |
+|---|---|---|---|---|
+| **mediapipe** | 16.1 | 62.0 | **0.048** | 57.3% / 76.1% |
+| dwpose | **29.8** | 33.6 | 0.144 | **11.2%** / 53.4% |
+| rtmw | 21.5 | 46.5 | 0.118 | 0.0% / 0.0% (see caveat) |
+| vitpose | 17.2 | 58.1 | 0.112 | 38.2% / 65.8% |
+
+First pass, three findings, then two of them were overturned on follow-up
+investigation (below) — kept here rather than silently rewritten, since the
+correction is as informative as the original numbers:
+- MediaPipe looked like the *slowest* of the four, running CPU-only.
+- MediaPipe's jitter floor was the clear best (0.048 vs 0.11–0.14) — this one
+  **held up**: first direct empirical evidence for loose end A's running-mode
+  story, not just the logical inference from "VIDEO mode has temporal
+  smoothing." MediaPipe's tracking really is measurably steadier frame-to-frame,
+  in the same units and signal Phase 6's boundary detector will use.
+- Hand dropout looked like it didn't favor MediaPipe (57.3% mean, worst of the
+  four).
+
+**Follow-up 1 — hand dropout, corrected.** Prompted by "can the dropout be
+fixed?" Before assuming a fix was needed, checked *where* the dropout happens:
+split each clip's frames into the trimmed active-signing span (what grading
+actually uses) vs. the discarded rest span (`hand_motion_energy` +
+`motion_active_span`, same signal as trim_to_motion), and measured dropout
+separately in each, 40-clip sample:
+
+| backend | active-span dropout (what matters) | rest dropout (discarded anyway) |
+|---|---|---|
+| **mediapipe** | 16.8% | 99.6% |
+| dwpose | 13.5% | n/a — active span ≈ whole clip (no rest window; consistent with loose end A) |
+| rtmw | 0.0% | 0.0% (still flagged suspicious, unchanged) |
+| vitpose | 37.2% | n/a — same as dwpose |
+
+The 57.3%/76.1% full-dataset number was measuring almost entirely (99.6%)
+**rest frames that get trimmed away before grading ever sees them** — hands
+lowered out of MediaPipe's detection range during rest, not a tracking failure
+during the sign itself. Inside the span that's actually graded, MediaPipe's
+16.8% is competitive with dwpose and clearly better than vitpose. Nothing to
+fix — the original full-dataset statistic was measuring the wrong region, not
+exposing a real defect. (This also independently corroborates loose end A from
+a different angle: dwpose/vitpose show no separate rest window at all because
+their per-frame jitter keeps the whole clip reading as "active" — exactly the
+"IMAGE mode never lets rest register as still" story, now visible in a second,
+unrelated metric.)
+
+**Follow-up 2 — MediaPipe on GPU, and it was worth checking.** Asked directly
+whether MediaPipe supports a GPU delegate at all (it does, `BaseOptions.Delegate.GPU`,
+confirmed against the installed mediapipe 0.10.35). The current extractor
+(`src/aslcv/extractor/mediapipe.py`) never sets `delegate=` on any of the three
+`BaseOptions` (pose/face/hand), so it's always taken the CPU default — that's
+why the first-pass FPS number was CPU-only. Requesting the GPU delegate
+directly **did not simply work**: MediaPipe silently fell back to Mesa's
+`llvmpipe` *software* OpenGL renderer (confirmed via the GL context log line)
+instead of this machine's real NVIDIA hardware — 4.4fps, ~4x *slower* than
+CPU, not faster. Root cause: on this Wayland desktop, MediaPipe's default EGL
+context creation doesn't resolve the NVIDIA EGL vendor on its own. Forcing it
+explicitly (`EGL_PLATFORM=x11` + `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/
+glvnd/egl_vendor.d/10_nvidia.json` at process launch) gets the real hardware
+context (log line confirms `renderer: NVIDIA GeForce RTX 4070 Laptop GPU`) —
+and with it, **hand landmarker alone: 173 fps vs 49.5 fps CPU (3.5x); the full
+3-model pipeline (pose+face+hands, matching production): 53.0 fps vs the
+16.1 fps CPU baseline (3.3x)**. Checked for silent corruption before trusting
+the speedup (the GPU delegate path logs an "undefined behavior... lack of
+synchronization" warning that's worth taking seriously, not hand-waving past):
+compared CPU vs. GPU hand-landmark output frame-by-frame on the same 20-frame
+slice — comparable detection counts (18/20 vs 17/20) and landmark positions
+agree closely (mean abs diff 0.0026 in normalized [0,1] coords, max 0.0099) —
+output looks safe, not corrupted, but this is a spot check, not a full
+regression suite.
+
+**Net, corrected:** MediaPipe is not just the accuracy and stability winner —
+with the GPU delegate properly configured, it's also the *fastest* of the four
+(53fps vs dwpose's 29.8fps), and its apparent hand-dropout weakness turns out
+to be a measurement artifact, not a real one. "Better across the board" was
+still wrong as originally stated (the first-pass numbers really did show
+MediaPipe losing on FPS and dropout) but turns out closer to true than the
+corrected picture initially suggested — once measured correctly.
+
+**Adopted, opt-in, default unchanged.** `MediaPipePoseExtractor` now takes
+`delegate: str = "cpu"` — the default stays CPU (byte-for-byte the same
+behavior every existing caller, test, and the entire 1,874-clip cache already
+depend on), so nothing about production extraction or the cache's provenance
+changed. `delegate="gpu"` requests `BaseOptions.Delegate.GPU` on all three
+landmarkers; a module-level `_maybe_force_nvidia_egl()` best-effort-sets the
+two EGL env vars found above (only if the caller hasn't already set an
+opinion, and only if a known NVIDIA vendor JSON actually exists on this
+machine — several common glvnd paths are checked, so it degrades to a no-op
+rather than assuming this exact machine's layout), and landmarker construction
+is wrapped in a try/except that falls back to CPU with a printed warning if
+GPU construction raises for any reason (no GPU, no compatible driver, etc.) —
+never a hard failure just because GPU wasn't available. `self.delegate_used`
+records which one actually ran. Wired into the two places FPS smoothness
+directly affects UX: `live_demo.py --gpu` and `diagnose_demo.py --gpu` (both
+opt-in, default off). Batch extraction (`extract_landmarks.py`) intentionally
+NOT switched to GPU by default — it's a one-time step already complete for all
+1,874 clips, so there's no time pressure, and changing it would mean deciding
+whether to re-extract the existing cache. Verified end to end through the real
+class, not just the standalone scratch test above: `delegate="gpu"` reaches
+`delegate_used == "gpu"` and ~44fps on a real clip. Full suite re-run after
+the `extractor/` change per the testing rule: **214 passed, 10 skipped** — no
+regressions, same numbers as before this change.
+
+**Final numbers, all corrections folded in.** `scripts/benchmark_extractors.py`
+gained `--gpu` (mediapipe only) and a region-split dropout metric
+(active-span vs. rest, alongside the original full-dataset number for
+comparison) so the corrected methodology is reusable, not a one-off. Re-run,
+`--n-clips 10 --seed 0 --gpu`:
+
+| backend | fps | jitter floor | dropout active% (what matters) | dropout rest% | dropout full% (naive) |
+|---|---|---|---|---|---|
+| **mediapipe+gpu** | **59.9** | **0.048** | 15.7 | 99.6 | 57.3 |
+| dwpose | 33.5 | 0.144 | **11.1** | n/a* | 11.2 |
+| rtmw | 29.9 | 0.118 | 0.0 (suspicious) | n/a* | 0.0 |
+| vitpose | 16.6 | 0.112 | 38.6 | n/a* | 38.2 |
+
+*dwpose/rtmw/vitpose show no separate rest window because their per-frame
+jitter keeps the whole clip reading as "active" — the same "IMAGE mode never
+lets rest register as still" finding from loose end A, visible again here.
+
+With GPU properly configured, MediaPipe is now the fastest of the four
+(59.9fps, ahead of dwpose's 33.5) as well as the steadiest (jitter) and
+already-established accuracy leader. The one place it doesn't win is active-
+span hand dropout (15.7% vs dwpose's 11.1%) — close, not the 57-vs-11 gap the
+naive full-dataset number implied, and left standing rather than explained
+away.
 
 **Everything below is the original full-sweep design, kept for reference** — run it
 only if the extractor decision is reopened (e.g. MediaPipe fails a real-time or
@@ -556,6 +707,12 @@ semantically labeled blendshapes), not Sapiens.
 **Cheap screen first (no labels, ~a day):** FPS/latency on the 4070, hand jitter on
 a held-still clip, hand-dropout under occlusion. Run on the same clips for all four,
 including hands-crossing and hands-near-frame-edge. Real-time failures are out.
+**A lighter version of this now exists and has been run** — see loose end C above
+(`scripts/benchmark_extractors.py`, 10-clip random sample, no hands-crossing/
+frame-edge stratification). This full version — a real day-scale grid on
+deliberately hard clips — is still what "kept for reference, only if reopened"
+means; loose end C answered the specific "is MediaPipe secretly worse at this"
+question, not the complete original design.
 
 **Accuracy comparison (needs Phase 2 + labels — do not run early):** extract ASL
 Citizen with each survivor, train the same model, compare signer-independent accuracy.

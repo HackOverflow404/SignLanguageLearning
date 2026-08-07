@@ -1,3 +1,4 @@
+import os
 import time
 from pathlib import Path
 
@@ -7,6 +8,41 @@ import numpy as np
 from mediapipe.tasks.python import vision
 
 from .base import Extractor, Pose, RunningMode, Skeleton
+
+# Common glvnd vendor JSON locations for the NVIDIA proprietary driver across
+# distros. Benchmarked (see project_workflow.md Phase 3 "Loose end C" /
+# scripts/benchmark_extractors.py): requesting BaseOptions.Delegate.GPU alone
+# does NOT get MediaPipe onto real hardware on a Linux desktop where its
+# default EGL context resolution can silently pick Mesa's llvmpipe SOFTWARE
+# renderer instead -- confirmed via the GL context log line, and ~4x SLOWER
+# than the CPU delegate, not faster. Forcing the vendor explicitly fixes it:
+# hand landmarker alone 173fps vs 49.5fps CPU; the full 3-model pipeline
+# 53.0fps vs 16.1fps CPU. Best-effort only -- if none of these paths exist
+# (different distro, no NVIDIA driver, a laptop with no discrete GPU at all),
+# this does nothing and the GPU delegate attempt below still has its own
+# try/except fallback to CPU.
+_NVIDIA_EGL_VENDOR_PATHS = (
+    "/usr/share/glvnd/egl_vendor.d/10_nvidia.json",
+    "/etc/glvnd/egl_vendor.d/10_nvidia.json",
+    "/usr/share/egl/egl_external_platform.d/10_nvidia.json",
+)
+
+
+def _maybe_force_nvidia_egl():
+    """Best-effort: point glvnd at the NVIDIA EGL vendor and force the X11 EGL
+    platform, but only if the caller hasn't already set an opinion (respects
+    an explicit environment override) and only if a known vendor JSON is
+    actually present on this machine. Idempotent; safe to call more than
+    once. Must run before any GPU-delegate landmarker is constructed --
+    mediapipe resolves the EGL vendor lazily on first use, not at import
+    time, so setting these here (not just documenting them) is sufficient."""
+    if "__EGL_VENDOR_LIBRARY_FILENAMES" in os.environ:
+        return
+    for path in _NVIDIA_EGL_VENDOR_PATHS:
+        if os.path.exists(path):
+            os.environ["__EGL_VENDOR_LIBRARY_FILENAMES"] = path
+            os.environ.setdefault("EGL_PLATFORM", "x11")
+            return
 
 # Keep all model weights inside the project. Resolved relative to this file
 # (src/aslcv/extractor/mediapipe.py -> project root) so it works wherever the repo lives.
@@ -274,6 +310,19 @@ class MediaPipePoseExtractor(Extractor):
     (which may lag the current frame), so a webcam loop keeps its full frame
     rate. LIVE frames are stamped with a real wall-clock timestamp; use it only
     for a live feed, never for offline files (see `RunningMode`).
+
+    Delegate (CPU/GPU)
+    -------------------
+    `delegate="cpu"` (default) matches every clip in the existing cache --
+    kept as the default so nothing about the 1,874-clip cache's provenance or
+    a caller's expectations changes unless GPU is asked for explicitly.
+    `delegate="gpu"` requests `BaseOptions.Delegate.GPU` on all three
+    landmarkers for a measured ~3.3x speedup (see the module-level comment on
+    `_maybe_force_nvidia_egl` for how and why), with an automatic, logged
+    fallback to CPU if GPU landmarker construction raises (e.g. no compatible
+    GPU/driver on this machine) -- never a hard failure just because GPU
+    wasn't available. `self.delegate_used` records which one actually ran,
+    since "GPU was requested" and "GPU was used" are not the same claim.
     """
 
     def __init__(
@@ -282,9 +331,12 @@ class MediaPipePoseExtractor(Extractor):
         running_mode: RunningMode = RunningMode.IMAGE,
         num_faces: int = 1,
         num_hands: int = 2,
+        delegate: str = "cpu",
     ):
         super().__init__(running_mode)
         self._mirrored = mirrored
+        if delegate not in ("cpu", "gpu"):
+            raise ValueError(f"delegate must be 'cpu' or 'gpu', got {delegate!r}")
 
         BaseOptions = mp.tasks.BaseOptions
         MpRunningMode = mp.tasks.vision.RunningMode
@@ -303,29 +355,44 @@ class MediaPipePoseExtractor(Extractor):
         self._latest_hands = None
         is_live = running_mode is RunningMode.LIVE
 
-        pose_options = vision.PoseLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=POSE_MODEL_PATH),
-            running_mode=mp_mode,
-        )
-        face_options = vision.FaceLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=FACE_MODEL_PATH),
-            running_mode=mp_mode,
-            num_faces=num_faces,
-            output_face_blendshapes=True,  # 52 semantic coeffs for NMM / facial grammar
-        )
-        hand_options = vision.HandLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
-            running_mode=mp_mode,
-            num_hands=num_hands,
-        )
-        if is_live:
-            pose_options.result_callback = self._on_pose_result
-            face_options.result_callback = self._on_face_result
-            hand_options.result_callback = self._on_hands_result
+        def build(mp_delegate):
+            pose_options = vision.PoseLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=POSE_MODEL_PATH, delegate=mp_delegate),
+                running_mode=mp_mode,
+            )
+            face_options = vision.FaceLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=FACE_MODEL_PATH, delegate=mp_delegate),
+                running_mode=mp_mode,
+                num_faces=num_faces,
+                output_face_blendshapes=True,  # 52 semantic coeffs for NMM / facial grammar
+            )
+            hand_options = vision.HandLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH, delegate=mp_delegate),
+                running_mode=mp_mode,
+                num_hands=num_hands,
+            )
+            if is_live:
+                pose_options.result_callback = self._on_pose_result
+                face_options.result_callback = self._on_face_result
+                hand_options.result_callback = self._on_hands_result
+            return (
+                vision.PoseLandmarker.create_from_options(pose_options),
+                vision.FaceLandmarker.create_from_options(face_options),
+                vision.HandLandmarker.create_from_options(hand_options),
+            )
 
-        self._pose = vision.PoseLandmarker.create_from_options(pose_options)
-        self._face = vision.FaceLandmarker.create_from_options(face_options)
-        self._hands = vision.HandLandmarker.create_from_options(hand_options)
+        self.delegate_used = delegate
+        if delegate == "gpu":
+            _maybe_force_nvidia_egl()
+            try:
+                self._pose, self._face, self._hands = build(BaseOptions.Delegate.GPU)
+            except Exception as e:
+                print(f"MediaPipePoseExtractor: GPU delegate failed ({e!r}), falling back to CPU",
+                      flush=True)
+                self.delegate_used = "cpu"
+                self._pose, self._face, self._hands = build(BaseOptions.Delegate.CPU)
+        else:
+            self._pose, self._face, self._hands = build(BaseOptions.Delegate.CPU)
 
         # VIDEO needs a monotonically increasing timestamp per frame. The
         # extract() interface carries no real frame PTS, so we advance a
