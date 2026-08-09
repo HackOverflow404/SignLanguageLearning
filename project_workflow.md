@@ -51,12 +51,20 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 >   guard against the VIDEO+n>1 combination. Full suite: **84/84 green**, `make test`.
 >
 > Phase 3 is now fully DONE: the core question (which extractor) is answered
-> (MediaPipe), and both remaining loose ends are closed — the running-mode confound
-> is documented (not re-measured; rtmlib has no smoothing to switch on) and the true-z
-> ablation is formally decided not worth pursuing (see "Phase 3 — status" below). With
-> Phase 4 and Phase 5a also done, the recognition track (Phases 1-4) plus reference
-> retrieval have nothing left blocking them; what's open is actual fluent Deaf review
-> of Phase 5b's engine output, and Phase 6 (the adaptive loop, now genuinely unblocked).
+> (MediaPipe, and — after actually running the deferred cheap screen and adding a
+> GPU delegate, see Phase 3 status — now the fastest of the four too, not just the
+> most accurate). With Phase 4 and Phase 5a also done, the recognition track
+> (Phases 1-4) plus reference retrieval have nothing left blocking them.
+>
+> **Phase 6 v1 is now also wired end to end** (see Phase 6 status): a persisted
+> per-sign/per-parameter learner model, a gap-targeting + recency-biased scheduler
+> with automatic contrastive minimal-pair drills, and templated coaching feedback,
+> all live in `diagnose_demo.py` — `n` now records the current attempt and adaptively
+> picks the next target instead of blind list-cycling. Deliberately v1-scoped: a
+> heuristic, not a real spaced-repetition interval algorithm; templated text, not an
+> LLM coach; still a script, not a packaged `app/`. What's open: actual fluent Deaf
+> review of Phase 5b's engine output (a human bottleneck, not code), and Phase 6's own
+> deferred pieces (LLM sentence prompts, difficulty control, an LLM feedback pass).
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -1072,25 +1080,85 @@ Note the dynamicness the tutor needs is **content-driven** and both approaches h
 it equally — one template × 60 vocabulary signs is thousands of gap-targetable
 sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
 
-### Phase 6 — The adaptive learning app (wire the loop)
+### Phase 6 — The adaptive learning app (wire the loop) — status: v1 loop wired, in diagnose_demo.py
 
-- **Learner model:** per-sign + per-parameter mastery, updated every attempt. The
-  per-parameter part is what generalizes ("forehead-location signs get missed across
-  the board") to signs not yet drilled.
-- **Adaptive engine:** spaced repetition (retention) + gap-targeting (weakest signs
-  and parameters) + difficulty control. No fixed lesson order, no test bank.
-- **Task generator:** targeted isolated drills; contrastive minimal-pair drills that
-  fire automatically when two signs differing in one parameter get confused (the
-  phonological data supplies the pairs); (v2) sentence prompts via an LLM
-  constrained to the current vocabulary and weak items, each validated through the
-  rule engine (§5b) and discarded if out of scope.
-- **Feedback presenter:** an LLM phrases the diagnosis as natural coaching (English
-  only); the app shows the real reference clip as the model of correct form.
-- Wire the closed loop end to end.
-- **Produces:** the working adaptive tutor for isolated signs (v1).
-- **Done when:** the app chooses what to practice from the learner's gaps, drills,
-  corrects at parameter level, and adapts across a session — nothing fixed except
-  the reference correctness.
+**Scoping decision (made explicitly, not defaulted into):** v1 extends
+`diagnose_demo.py` rather than a new standalone app — its webcam loop, grading,
+and reference-clip plumbing were already proven; wrapping the adaptive loop
+around it is a much smaller diff than rebuilding that scaffolding. The
+scheduler is a simple weighted-random heuristic (gap-targeting + a light
+recency bias), not a real spaced-repetition interval algorithm (SM2/Leitner) —
+correct enough to close the loop end to end; the feedback presenter is
+templated English text, not an LLM call. Both are later, self-contained
+upgrades over what's built now, not blockers to having a working adaptive
+session.
+
+- **Learner model — DONE.** `src/aslcv/learner/mastery.py`'s `MasteryState`:
+  per-sign, per-parameter mastery in [0, 1], EMA-updated (`LEARNING_RATE=0.3`
+  toward 1.0/0.0) from each attempt's real `ParameterVerdict.correct`. A `None`
+  verdict (MIN_SUPPORT insufficient data) is skipped entirely, never averaged
+  in as a fake 0.5 — an unresolved question isn't evidence of medium mastery.
+  Persisted as JSON (`data/learner_state.json`, gitignored — personal session
+  state, not project data) via an atomic temp-file + `os.replace` write, same
+  convention as `extract_landmarks.py`'s cache writes. A logical clock (plain
+  incrementing counter, not wall-clock) tracks recency deterministically.
+- **Adaptive engine — DONE (heuristic, not full spaced-repetition).**
+  `src/aslcv/learner/scheduler.py`'s `pick_next`: weighted-random over the
+  active target pool, weight = `max(WEAKNESS_FLOOR, 1.05 - sign_mastery) x
+  recency_boost` (recency saturates at 2x after `RECENCY_CAP=20` attempts
+  unseen) — biases toward weak, long-unseen signs while keeping even a
+  mastered sign reachable (skill can regress; nothing should ever be fully
+  starved). "Difficulty control" from the original spec is NOT implemented —
+  there's no notion of drill difficulty in v1, only which sign/parameter to
+  target next.
+- **Task generator (isolated + contrastive) — DONE; sentence prompts deferred
+  to v2 as originally scoped.** `find_minimal_pairs` re-derives the same
+  differ-in-exactly-one-parameter pairing `eval_minimal_pairs.py` uses for the
+  accuracy screen (re-derived, not imported — that's script code, this is
+  library code the live session imports), scoped to the active target pool
+  only (a contrastive pick must itself have a validated reference clip, same
+  fail-closed constraint `resolve_targets` already enforces). `pick_next`
+  fires a contrastive drill FIRST and unconditionally whenever the last
+  attempt's most-confidently-wrong parameter has a real partner sign in the
+  pool — verified end to end on real data, not just unit tests: grading a
+  real `father` clip against `mother` (the curriculum's built-in
+  `minor_location` minimal pair) correctly queues `father` right back up
+  next. LLM-generated sentence prompts remain v2, unchanged from the original
+  scoping — Phase 5a's retrieval and Phase 5b's rule engine exist now to
+  support that when it's built, but it isn't yet.
+- **Feedback presenter — DONE (templated, not LLM).**
+  `src/aslcv/generator/feedback.py`'s `coach_text`: one line, praise if every
+  judged parameter matched, otherwise names the SINGLE most-confidently-wrong
+  parameter with a short tip (an instructor gives one correction at a time,
+  not five at once) and briefly lists any other misses. Duck-typed on
+  `.parameter`/`.correct`/`.confidence` — no dependency on the grading
+  package's dataclass, just its shape, so this module (and its tests) never
+  load torch or a checkpoint. `focus_parameter` factors out the "which
+  parameter would coach_text focus on" signal so the scheduler's contrastive
+  trigger doesn't have to re-derive it or parse prose.
+- **Closed loop, wired end to end in `diagnose_demo.py`.** `c` is unchanged
+  (clear the window, retry the SAME target, last verdict stays on screen
+  dimmed). `n` is now the adaptive step, not blind list-cycling: records the
+  CURRENT non-stale verdict into `MasteryState` (a stale verdict is a re-sign
+  in progress, not a completed attempt — never double-scored), saves to disk,
+  prints one line of coaching, then calls `pick_next` for the next target —
+  console-prints the reason when a contrastive drill fires, and the on-screen
+  target line now shows live mastery (`TARGET: mother   mastery 62%`).
+  `resolve_targets`'s fail-closed reference-clip validation is unchanged and
+  still gates the whole pool up front. 22 new tests
+  (`tests/test_mastery.py`, `tests/test_scheduler.py`, `tests/test_feedback.py`
+  — pure logic + real phonology data, no torch/checkpoint needed for the
+  first two), full suite **236 passed / 10 skipped** (up from 214/10).
+- **Produces:** a working adaptive tutor for isolated signs (v1) — not yet
+  packaged as `app/` (still a script), not yet difficulty-aware, not yet
+  spaced-repetition-scheduled in the interval-algorithm sense, not yet
+  LLM-phrased. All four are legitimate, scoped-out-on-purpose follow-ups, not
+  gaps that block "done when" below.
+- **Done when:** the app chooses what to practice from the learner's gaps
+  (**yes**), drills (**yes, isolated + contrastive**), corrects at parameter
+  level (**yes**), and adapts across a session (**yes, persisted across
+  sessions too, not just within one**) — nothing fixed except the reference
+  correctness.
 
 ### Phase 7 — Stretch: sentences & continuous recognition (v2)
 
@@ -1145,7 +1213,7 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   DTWGrader's interface; grade_against also returns per-
                        #   parameter ParameterVerdict gated by MIN_SUPPORT, incl. a
                        #   confidence field; grade_poses/grade_against_poses take
-                       #   in-memory frames for live use, uncommitted pending go-ahead)
+                       #   in-memory frames for live use)
       production/      # Phase 5
         gloss_rules.py #   5b — spaCy-backed, fail-closed gloss + NMM rule engine
                        #   (BUILT + hardened: curriculum-derived lexicon that fails
@@ -1158,14 +1226,27 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   (GlossSequence -> trimmed, hard-cut, concatenated
                        #   video; fail-closed) + write_composed_video. No
                        #   pose-sequence concatenation (deferred to Phase 7 --
-                       #   see its module docstring). Uncommitted pending go-ahead.
+                       #   see its module docstring).
         rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data;
                        #   still Python control flow today, not yet extracted here)
         lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags (currently
                        #   lives inline in gloss_rules.py, built from curriculum.yaml)
         templates/     #   5c — correct-by-construction generation (later)
-      learner/         # Phase 6 — learner model + adaptive engine
-      generator/       # Phase 6 — drills, contrastive pairs, sentence prompts
+      learner/         # Phase 6 v1 — DONE (heuristic, not full spaced-repetition)
+        mastery.py     #   MasteryState: per-sign/per-parameter EMA mastery from
+                        #   real ParameterVerdict.correct (None skipped, not
+                        #   averaged in); atomic JSON save/load
+                        #   (data/learner_state.json, gitignored)
+        scheduler.py    #   find_minimal_pairs (differ-in-one-parameter pairs,
+                        #   scoped to the active pool) + pick_next (weighted-
+                        #   random gap-targeting + recency, or an automatic
+                        #   contrastive drill when the last mistake has a real
+                        #   partner sign)
+      generator/       # Phase 6 v1 — DONE for isolated + contrastive drills;
+                        #   LLM sentence prompts still v2, unbuilt
+        feedback.py    #   coach_text/focus_parameter: templated English
+                        #   coaching from a graded attempt, duck-typed on
+                        #   ParameterVerdict's shape (no grading-package import)
     scripts/           # DONE — extract_landmarks.py (extract, records provenance),
                        #   verify_cache.py (integrity + provenance/staleness), render_clip.py
                        #   (draw cached poses back onto video for eyeballing), eval_slice.py
@@ -1183,12 +1264,16 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
                        #   grader.py (Phase 4: re-measures DTW on the 60-sign val split,
                        #   compares to the learned grader, per-parameter accuracy report,
                        #   mother/father head-independence demo -> PHASE4_REPORT.md),
-                       #   diagnose_demo.py (Phase 4: live webcam grade_against demo,
-                       #   reference clip loop + per-parameter verdicts + fail-closed
-                       #   guards + --selftest; built and verified, uncommitted pending
-                       #   go-ahead)
+                       #   diagnose_demo.py (Phase 4 grading + Phase 6 v1 adaptive
+                       #   loop: live webcam grade_against demo, reference clip loop,
+                       #   per-parameter verdicts, fail-closed guards, --selftest,
+                       #   --gpu; [n] now records mastery + picks the next target
+                       #   adaptively instead of cycling a fixed list),
+                       #   benchmark_extractors.py (Phase 3: FPS/jitter/region-split
+                       #   hand-dropout across all 4 extractors, --gpu for mediapipe)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
-    app/               # Phase 6 — the loop, feedback presenter (LLM English only)
+    app/               # Phase 6 v1 loop lives in scripts/diagnose_demo.py for now,
+                       #   not packaged here yet -- see Phase 6 status
     tests/
       test_embedding_model.py   # Phase 4 — architecture tests on synthetic tensors,
                                  #   incl. test_heads_are_structurally_disjoint (backprop-

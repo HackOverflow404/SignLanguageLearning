@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""diagnose_demo.py -- live webcam demo of Phase 4's grade_against(attempt, target).
+"""diagnose_demo.py -- Phase 6 v1: the adaptive loop, live, over Phase 4's
+grade_against(attempt, target).
 
 Prompts a target sign, plays that sign's real reference clip on loop next to the live
 webcam view, captures your attempt over a sliding window, and shows the PER-PARAMETER
 diagnosis from EmbeddingGrader.grade_against_poses -- handshape / major_location /
 minor_location / movement / repeated_movement, each MATCH/OFF/insufficient-data with
-the model's confidence, plus overall fidelity. Correct one parameter, clear (`c`), and
-re-try -- the last verdict stays on screen so you can see what changed.
+the model's confidence, plus overall fidelity. `c` clears the window and re-tries the
+SAME target (the last verdict stays on screen, dimmed, so you can see what changed).
+`n` is the adaptive step: it records the current (non-stale) verdict into a persisted
+per-sign/per-parameter mastery model (aslcv.learner.mastery), prints one line of
+templated coaching (aslcv.generator.feedback) naming the parameter most confidently
+wrong, and picks the next target itself (aslcv.learner.scheduler) -- gap-targeting +
+a light recency bias, or an automatic contrastive minimal-pair drill if the mistake
+has a real partner sign in the current pool (e.g. missing minor_location on `father`
+queues `mother` next). Nothing here is a spaced-repetition interval scheduler or an
+LLM-phrased coach -- see project_workflow.md's Phase 6 section for that v1 scoping.
 
 This is scripts/live_demo.py's own scaffolding (webcam loop, sliding window, mirrored-
 DISPLAY-only handling, background-threaded grading, pipeline_config.py wiring) with
-exactly two substantive changes: the grader is Phase 4's learned EmbeddingGrader, not
-Phase 2's DTWGrader, and the interface is grade_against(attempt, KNOWN target), not
-open-set "which sign is this."
+two substantive changes from Phase 2's live_demo.py: the grader is Phase 4's learned
+EmbeddingGrader (grade_against a KNOWN target, not open-set "which sign is this"), and
+Phase 6's mastery/scheduler/feedback loop replaces manual target cycling.
 
 HONEST LIMITS (also shown on screen, every frame): this confirms the plumbing and
 lets you practice imitating a real reference clip. It does NOT independently verify
@@ -20,8 +29,8 @@ ASL correctness -- "all correct" means "matched the reference," not "fluent." A
 target with no cached reference clip is refused outright (fail-closed), never graded
 without something on screen to imitate.
 
-    .venv/bin/python scripts/diagnose_demo.py                       # mediapipe, cycle the default targets
-    .venv/bin/python scripts/diagnose_demo.py --target father        # start on father, [n] still cycles onward
+    .venv/bin/python scripts/diagnose_demo.py                       # mediapipe, adaptive over the default pool
+    .venv/bin/python scripts/diagnose_demo.py --target father        # start on father, [n] still adapts onward
     .venv/bin/python scripts/diagnose_demo.py --targets you,me,water
     .venv/bin/python scripts/diagnose_demo.py --selftest             # no camera: verify the whole path offline
 """
@@ -38,14 +47,18 @@ import numpy as np
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
+from aslcv.generator.feedback import coach_text, focus_parameter
 from aslcv.grading.embedding_grader import EmbeddingGrader
-from aslcv.grading.phonology_labels import ALL_PARAMETERS
+from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
+from aslcv.learner.mastery import MasteryState
+from aslcv.learner.scheduler import find_minimal_pairs, pick_next
 from aslcv.pipeline_config import add_pipeline_args, build_pipeline
 from live_demo import _poses_from_npz, build_extractor  # reuse, don't rebuild
 
 REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "data" / "manifest.csv"
 DEFAULT_CHECKPOINT = REPO / "models" / "embedding_grader"
+DEFAULT_MASTERY_PATH = REPO / "data" / "learner_state.json"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 # A small, phonologically clear starting set -- includes the curriculum's built-in
@@ -189,13 +202,16 @@ def _tag_and_color(verdict):
     return "insufficient data", (170, 170, 170)
 
 
-def draw_verdict(canvas, result, target_sign, stale, n_win, win_cap, fps, grade_ms):
+def draw_verdict(canvas, result, target_sign, stale, n_win, win_cap, fps, grade_ms, mastery=None):
     h, w = canvas.shape[:2]
     band = canvas.copy()
     cv2.rectangle(band, (0, 0), (w, 230), (0, 0, 0), -1)
     cv2.addWeighted(band, 0.6, canvas, 0.4, 0, canvas)
 
-    cv2.putText(canvas, f"TARGET: {target_sign}", (14, 26), FONT, 0.8, (255, 220, 120), 2)
+    title = f"TARGET: {target_sign}"
+    if mastery is not None:
+        title += f"   mastery {mastery.sign_mastery(target_sign):.0%}"
+    cv2.putText(canvas, title, (14, 26), FONT, 0.8, (255, 220, 120), 2)
 
     if result is None:
         msg = "no verdict yet -- previous attempt cleared" if stale else "collecting frames..."
@@ -214,12 +230,13 @@ def draw_verdict(canvas, result, target_sign, stale, n_win, win_cap, fps, grade_
             cv2.putText(canvas, line, (14, y), FONT, 0.55, color, 1)
             y += 26
 
-    status = f"window {n_win}/{win_cap}  {fps:.0f} fps  grade {grade_ms:.0f} ms  [q]uit [c]lear [n]ext target"
+    status = f"window {n_win}/{win_cap}  {fps:.0f} fps  grade {grade_ms:.0f} ms  [q]uit [c]lear [n]ext (adaptive)"
     cv2.putText(canvas, status, (14, h - 36), FONT, 0.5, (220, 220, 220), 1)
     cv2.putText(canvas, DISCLAIMER, (14, h - 12), FONT, 0.45, (0, 165, 255), 1)
 
 
-def compose_canvas(ref_frame, live_frame, target_sign, result, stale, n_win, win_cap, fps, ms, height=480):
+def compose_canvas(ref_frame, live_frame, target_sign, result, stale, n_win, win_cap, fps, ms,
+                    mastery=None, height=480):
     def fit(frame, fallback_w=360):
         if frame is None:
             return np.zeros((height, fallback_w, 3), np.uint8)
@@ -231,7 +248,7 @@ def compose_canvas(ref_frame, live_frame, target_sign, result, stale, n_win, win
     right = fit(live_frame)
     cv2.rectangle(left, (0, 0), (left.shape[1], 34), (0, 0, 0), -1)
     cv2.putText(left, f"REFERENCE: {target_sign}", (10, 24), FONT, 0.65, (255, 255, 255), 2)
-    draw_verdict(right, result, target_sign, stale, n_win, win_cap, fps, ms)
+    draw_verdict(right, result, target_sign, stale, n_win, win_cap, fps, ms, mastery=mastery)
     return np.hstack([left, right])
 
 
@@ -245,21 +262,31 @@ def run_live(args):
 
     rows = manifest_rows()
     cycle = resolve_targets(args, rows, grader)
-    print(f"targets ({len(cycle)}, [n] cycles): {', '.join(s for s, _ in cycle)}")
+    pool_signs = [sign for sign, _ in cycle]
+    rows_by_sign = dict(cycle)
+    print(f"targets ({len(cycle)}, [n] picks adaptively): {', '.join(pool_signs)}")
     print(DISCLAIMER)
 
-    ref = ReferenceLoop()
-    state = {"idx": 0, "target": None}
+    # Phase 6: per-sign/per-parameter mastery persisted across sessions, and the
+    # minimal pairs available for contrastive drills WITHIN this pool -- both
+    # scoped to `pool_signs` since a contrastive pick must itself be a resolvable
+    # target (already fail-closed-validated above to have a reference clip).
+    mastery = MasteryState.load(args.mastery_path)
+    phon_labels = PhonologyLabels()
+    minimal_pairs = find_minimal_pairs(phon_labels, pool_signs)
 
-    def switch_target(i):
-        state["idx"] = i % len(cycle)
-        sign, row = cycle[state["idx"]]
+    ref = ReferenceLoop()
+    state = {"target": None}
+
+    def switch_target(sign):
+        row = rows_by_sign[sign]
         frames = load_reference_frames(REPO / row["video_path"])
         ref.set_target(sign, row["video_id"], frames)
         state["target"] = sign
-        print(f"target -> {sign}  (reference clip: {row['video_id']}, {len(frames)} frames)")
+        print(f"target -> {sign}  (mastery {mastery.sign_mastery(sign):.0%}, "
+              f"reference clip: {row['video_id']}, {len(frames)} frames)")
 
-    switch_target(0)
+    switch_target(pool_signs[0])
 
     window = deque(maxlen=args.window)
     win_lock = threading.Lock()
@@ -303,7 +330,8 @@ def run_live(args):
         extractor.close()
         raise SystemExit(f"cannot open camera {args.camera}")
 
-    print("controls: [q]/ESC quit   [c] clear window (keeps last verdict)   [n] next target")
+    print("controls: [q]/ESC quit   [c] clear window (keeps last verdict)   "
+          "[n] record + adaptively pick next target")
     fps_t, fps_n, fps = time.time(), 0, 0.0
     try:
         while cap.isOpened():
@@ -326,7 +354,7 @@ def run_live(args):
                 n_win = len(window)
 
             canvas = compose_canvas(ref_frame, live_canvas, state["target"], result, stale,
-                                     n_win, args.window, fps, ms)
+                                     n_win, args.window, fps, ms, mastery=mastery)
             cv2.imshow("Phase 4 diagnose demo", canvas)
 
             key = cv2.waitKey(1) & 0xFF
@@ -338,7 +366,24 @@ def run_live(args):
                 with res_lock:
                     shared["stale"] = True  # last verdict stays visible, just marked stale
             if key == ord("n"):
-                switch_target(state["idx"] + 1)
+                # Phase 6: record the CURRENT (non-stale) verdict into mastery
+                # before moving on -- a stale one is a re-sign in progress, not
+                # a completed attempt, so it must not be scored twice or scored
+                # as this attempt's result.
+                wrong_parameter = None
+                if result is not None and not stale:
+                    correct_by_parameter = {p: v.correct for p, v in result.parameters.items()}
+                    mastery.update(state["target"], correct_by_parameter)
+                    mastery.save(args.mastery_path)
+                    print(f"  [{state['target']}] {coach_text(result.parameters)}")
+                    wrong_parameter = focus_parameter(result.parameters)
+                next_sign = pick_next(mastery, pool_signs, last_sign=state["target"],
+                                       last_wrong_parameter=wrong_parameter, minimal_pairs=minimal_pairs)
+                if wrong_parameter is not None and next_sign != state["target"] \
+                        and any(next_sign in (a, b) for a, b in minimal_pairs.get(wrong_parameter, [])):
+                    print(f"  -> contrastive drill: {next_sign} (differs from "
+                          f"{state['target']} only in {wrong_parameter})")
+                switch_target(next_sign)
                 with win_lock:
                     window.clear()
                 with res_lock:
@@ -431,6 +476,8 @@ def main():
     ap.add_argument("--gpu", action="store_true",
                     help="mediapipe only: request the GPU delegate (~3.3x faster, measured; "
                          "falls back to CPU automatically if unavailable on this machine)")
+    ap.add_argument("--mastery-path", type=Path, default=DEFAULT_MASTERY_PATH,
+                    help="Phase 6 learner-state JSON (persists across sessions; missing file = fresh learner)")
     ap.add_argument("--selftest", action="store_true", help="no camera: verify the whole path on cached val clips")
     add_pipeline_args(ap)
     args = ap.parse_args()
