@@ -45,6 +45,7 @@ presentational only, still not graded (continuous-sentence grading is Phase 7).
 """
 import argparse
 import csv
+import textwrap
 import threading
 import time
 from collections import defaultdict, deque
@@ -246,8 +247,57 @@ def draw_verdict(canvas, result, target_sign, stale, n_win, win_cap, fps, grade_
     cv2.putText(canvas, DISCLAIMER, (14, h - 12), FONT, 0.45, (0, 165, 255), 1)
 
 
+def draw_sentence_prompt(canvas, seq, y_top):
+    """Draws seq's English sentence + gloss line onto `canvas` below y_top,
+    word-wrapped to the canvas width -- a quick-glance version; the console
+    print at the switch_target call site carries the full render() (gloss +
+    NMM tag spans) for anyone reading the terminal instead. No-op if seq is
+    None (disabled / no token / every LLM attempt refused by the rule
+    engine) -- never draws a placeholder implying a prompt exists."""
+    if seq is None:
+        return
+    max_chars = max(20, canvas.shape[1] // 11)
+    english_lines = textwrap.wrap(f'"{seq.english}"', width=max_chars) or [""]
+    gloss_line = " ".join(g.text for g in seq.glosses)
+    gloss_lines = textwrap.wrap(gloss_line, width=max_chars) or [""]
+    all_lines = ([(t, (160, 225, 255)) for t in english_lines]
+                 + [(t, (140, 255, 190)) for t in gloss_lines])
+
+    band_h = 8 + 18 * len(all_lines)
+    band = canvas.copy()
+    cv2.rectangle(band, (0, y_top), (canvas.shape[1], y_top + band_h), (0, 0, 0), -1)
+    cv2.addWeighted(band, 0.6, canvas, 0.4, 0, canvas)
+    y = y_top + 16
+    for text, color in all_lines:
+        cv2.putText(canvas, text, (10, y), FONT, 0.42, color, 1)
+        y += 18
+
+
+def draw_coach_text(canvas, text, sign, y_top):
+    """Draws the coaching line from the attempt just recorded on the
+    PREVIOUS [n] press (templated coach_text, or an LLM phrasing of the same
+    facts under --llm-feedback) below the verdict band. Labeled with which
+    sign it was about, since the target has usually already moved on by the
+    time this draws (mirrors the same "show what changed" spirit as the
+    dimmed stale verdict). No-op if there's no coaching text yet -- a fresh
+    session, or before the first attempt has been submitted with [n]."""
+    if text is None:
+        return
+    max_chars = max(20, canvas.shape[1] // 11)
+    lines = textwrap.wrap(f"coach ({sign}): {text}", width=max_chars) or [""]
+    band_h = 8 + 18 * len(lines)
+    band = canvas.copy()
+    cv2.rectangle(band, (0, y_top), (canvas.shape[1], y_top + band_h), (0, 0, 0), -1)
+    cv2.addWeighted(band, 0.6, canvas, 0.4, 0, canvas)
+    y = y_top + 16
+    for line in lines:
+        cv2.putText(canvas, line, (14, y), FONT, 0.42, (255, 210, 140), 1)
+        y += 18
+
+
 def compose_canvas(ref_frame, live_frame, target_sign, result, stale, n_win, win_cap, fps, ms,
-                    mastery=None, height=480):
+                    mastery=None, sentence_prompt=None, coach_text=None, coach_text_for=None,
+                    height=480):
     def fit(frame, fallback_w=360):
         if frame is None:
             return np.zeros((height, fallback_w, 3), np.uint8)
@@ -259,7 +309,9 @@ def compose_canvas(ref_frame, live_frame, target_sign, result, stale, n_win, win
     right = fit(live_frame)
     cv2.rectangle(left, (0, 0), (left.shape[1], 34), (0, 0, 0), -1)
     cv2.putText(left, f"REFERENCE: {target_sign}", (10, 24), FONT, 0.65, (255, 255, 255), 2)
+    draw_sentence_prompt(left, sentence_prompt, y_top=34)
     draw_verdict(right, result, target_sign, stale, n_win, win_cap, fps, ms, mastery=mastery)
+    draw_coach_text(right, coach_text, coach_text_for, y_top=240)
     return np.hstack([left, right])
 
 
@@ -287,13 +339,14 @@ def run_live(args):
     minimal_pairs = find_minimal_pairs(phon_labels, pool_signs)
 
     ref = ReferenceLoop()
-    state = {"target": None}
+    state = {"target": None, "sentence_prompt": None, "coach_text": None, "coach_text_for": None}
 
     def switch_target(sign):
         row = rows_by_sign[sign]
         frames = load_reference_frames(REPO / row["video_path"])
         ref.set_target(sign, row["video_id"], frames)
         state["target"] = sign
+        state["sentence_prompt"] = None
         print(f"target -> {sign}  (mastery {mastery.sign_mastery(sign):.0%}, "
               f"reference clip: {row['video_id']}, {len(frames)} frames)")
         if args.sentence_prompts:
@@ -303,6 +356,7 @@ def run_live(args):
             # "production" would actually require.
             seq = sentence_prompt_maybe_llm(sign)
             if seq is not None:
+                state["sentence_prompt"] = seq
                 print(f"  example: \"{seq.english}\" -> {seq.render()}")
 
     switch_target(pool_signs[0])
@@ -373,7 +427,9 @@ def run_live(args):
                 n_win = len(window)
 
             canvas = compose_canvas(ref_frame, live_canvas, state["target"], result, stale,
-                                     n_win, args.window, fps, ms, mastery=mastery)
+                                     n_win, args.window, fps, ms, mastery=mastery,
+                                     sentence_prompt=state["sentence_prompt"],
+                                     coach_text=state["coach_text"], coach_text_for=state["coach_text_for"])
             cv2.imshow("Phase 4 diagnose demo", canvas)
 
             key = cv2.waitKey(1) & 0xFF
@@ -396,6 +452,8 @@ def run_live(args):
                     mastery.save(args.mastery_path)
                     text = coach_text_maybe_llm(state["target"], result.parameters, use_llm=args.llm_feedback)
                     print(f"  [{state['target']}] {text}")
+                    state["coach_text"] = text
+                    state["coach_text_for"] = state["target"]
                     wrong_parameter = focus_parameter(result.parameters)
                 next_sign = pick_next(mastery, pool_signs, last_sign=state["target"],
                                        last_wrong_parameter=wrong_parameter, minimal_pairs=minimal_pairs)
