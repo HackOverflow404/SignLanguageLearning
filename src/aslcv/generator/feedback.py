@@ -1,9 +1,16 @@
 """Templated English coaching text from a graded attempt's per-parameter verdicts.
 
-Duck-typed on purpose: takes anything with `.parameter`/`.correct`/`.confidence`
-attributes (real usage passes `GradeResult.parameters.values()`, i.e.
-`ParameterVerdict` objects) without importing that dataclass -- this module has
+Duck-typed on purpose: takes anything with `.parameter`/`.correct`/`.confidence`/
+`.predicted`/`.target` attributes (real usage passes `GradeResult.parameters.values()`,
+i.e. `ParameterVerdict` objects) without importing that dataclass -- this module has
 no reason to depend on the grading package, only on the shape of its output.
+
+`.predicted` (what the model classified the attempt's own value as) and
+`.target` (the TARGET sign's true grounded ASL-LEX/curriculum value) are both
+already computed by the grader -- this module's whole job is surfacing them,
+never inventing anything: "you signed X, the target is Y" is strictly a
+readout of two pre-computed, grounded facts, not ASL knowledge this module
+originates.
 """
 from __future__ import annotations
 
@@ -41,7 +48,8 @@ def coach_text(parameters) -> str:
         return _PRAISE
 
     focus = max(wrong, key=lambda v: v.confidence)
-    msg = f"Focus on your {PARAM_NAME[focus.parameter]} -- {PARAM_TIP[focus.parameter]}."
+    msg = (f"Focus on your {PARAM_NAME[focus.parameter]}: you signed "
+           f"'{focus.predicted}', the target is '{focus.target}' -- {PARAM_TIP[focus.parameter]}.")
     others = [v.parameter for v in wrong if v is not focus]
     if others:
         msg += " Also off: " + ", ".join(PARAM_NAME[p] for p in others) + "."

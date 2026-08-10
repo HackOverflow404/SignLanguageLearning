@@ -37,12 +37,21 @@ _warned_no_token = False
 
 
 def _facts(target_sign: str, parameters) -> dict:
+    """`wrong` carries not just WHICH parameters missed but the two
+    pre-computed, grounded values behind that verdict: `you_signed` (the
+    grader's own classification of the attempt) and `should_be` (the target
+    sign's true ASL-LEX/curriculum label) -- both already computed by
+    `EmbeddingGrader.grade_against`, never invented here or by the LLM this
+    feeds into."""
     verdicts = list(parameters.values()) if hasattr(parameters, "values") else list(parameters)
     judged = [v for v in verdicts if v.correct is not None]
     return {
         "target_sign": target_sign,
         "all_correct": bool(judged) and all(v.correct for v in judged),
-        "wrong": [PARAM_NAME[v.parameter] for v in judged if v.correct is False],
+        "wrong": [
+            {"name": PARAM_NAME[v.parameter], "you_signed": v.predicted, "should_be": v.target}
+            for v in judged if v.correct is False
+        ],
         "correct": [PARAM_NAME[v.parameter] for v in judged if v.correct is True],
     }
 
@@ -53,15 +62,22 @@ def _prompt(facts: dict) -> str:
     elif facts["all_correct"]:
         body = f"Every diagnosed aspect matched the reference sign for '{facts['target_sign']}'."
     else:
+        wrong_lines = "; ".join(
+            f"{w['name']}: they signed '{w['you_signed']}', it should be '{w['should_be']}'"
+            for w in facts["wrong"]
+        )
         body = (
             f"Target sign: '{facts['target_sign']}'. "
             f"Matched: {', '.join(facts['correct']) or 'none'}. "
-            f"Did NOT match: {', '.join(facts['wrong'])}."
+            f"Did NOT match -- {wrong_lines}."
         )
     return (
-        "You are phrasing ASL practice feedback for a learner, in one short "
-        "encouraging sentence (max ~25 words), plain English, no ASL jargon "
-        "they wouldn't already know from the app. You are NOT an ASL expert "
+        "You are phrasing ASL practice feedback for a learner, in one short, "
+        "SPECIFIC sentence (max ~35 words), plain English, no ASL jargon they "
+        "wouldn't already know from the app. For anything that did NOT "
+        "match, clearly state what they signed and what the target value "
+        "actually is, using the exact values given -- do not soften this "
+        "into vague praise like 'keep practicing.' You are NOT an ASL expert "
         "and must not add any ASL knowledge, corrections, or claims beyond "
         "the facts given below -- only phrase them naturally.\n\n"
         f"Facts: {body}\n\n"
@@ -93,7 +109,8 @@ def llm_coach_text(target_sign: str, parameters, token: "str | None" = None,
         client = InferenceClient(model=model, provider=provider, token=token, timeout=timeout)
         response = client.chat_completion(
             messages=[{"role": "user", "content": _prompt(_facts(target_sign, parameters))}],
-            max_tokens=100,
+            max_tokens=150,  # up from 100: naming multiple wrong parameters' you-signed/should-be
+                              # values (not just their names) needs more room before truncating
         )
         text = response.choices[0].message.content.strip()
         return text or None

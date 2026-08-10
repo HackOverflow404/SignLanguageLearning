@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from aslcv.generator.feedback import coach_text, focus_parameter
 
 
-def verdict(parameter, correct, confidence=0.8):
-    return SimpleNamespace(parameter=parameter, correct=correct, confidence=confidence)
+def verdict(parameter, correct, confidence=0.8, predicted="A", target="B"):
+    return SimpleNamespace(parameter=parameter, correct=correct, confidence=confidence,
+                            predicted=predicted, target=target)
 
 
 def test_all_correct_is_praise():
@@ -63,6 +64,17 @@ def test_other_wrong_parameters_are_named_but_not_focused():
 def test_accepts_a_plain_iterable_not_just_dict_values():
     parameters = [verdict("handshape", False, confidence=0.9)]
     assert focus_parameter(parameters) == "handshape"
+
+
+def test_focus_message_states_what_was_signed_and_the_target_value():
+    # this is the actionable content the templated line must carry -- not
+    # just "focus on your handshape" but WHAT was wrong and WHAT it should
+    # have been, both pre-computed grounded facts from the grader, never
+    # invented here.
+    parameters = {"handshape": verdict("handshape", False, confidence=0.9, predicted="1", target="5")}
+    text = coach_text(parameters)
+    assert "'1'" in text
+    assert "'5'" in text
 
 
 if __name__ == "__main__":

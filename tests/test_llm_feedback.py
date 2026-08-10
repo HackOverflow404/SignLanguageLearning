@@ -15,8 +15,9 @@ from aslcv.generator.llm_feedback import _facts, _prompt, coach_text_maybe_llm, 
 from _hf_test_utils import no_ambient_hf_token
 
 
-def verdict(parameter, correct, confidence=0.8):
-    return SimpleNamespace(parameter=parameter, correct=correct, confidence=confidence)
+def verdict(parameter, correct, confidence=0.8, predicted="A", target="B"):
+    return SimpleNamespace(parameter=parameter, correct=correct, confidence=confidence,
+                            predicted=predicted, target=target)
 
 
 # ---- pure fact-extraction / prompt shape ---------------------------------------
@@ -28,13 +29,13 @@ def test_facts_all_correct():
     assert facts["wrong"] == []
 
 
-def test_facts_records_wrong_and_correct_by_readable_name():
+def test_facts_records_wrong_with_readable_name_and_grounded_values():
     parameters = {
-        "handshape": verdict("handshape", False),
+        "handshape": verdict("handshape", False, predicted="1", target="5"),
         "movement": verdict("movement", True),
     }
     facts = _facts("mother", parameters)
-    assert facts["wrong"] == ["handshape"]
+    assert facts["wrong"] == [{"name": "handshape", "you_signed": "1", "should_be": "5"}]
     assert facts["correct"] == ["movement path"] or facts["correct"] == ["movement"]  # PARAM_NAME value
 
 
@@ -50,6 +51,13 @@ def test_prompt_never_asks_the_model_to_judge_correctness():
     prompt = _prompt(facts)
     assert "phrase" in prompt.lower()
     assert "not an asl expert" in prompt.lower() or "not add any asl knowledge" in prompt.lower()
+
+
+def test_prompt_carries_the_exact_signed_and_target_values():
+    facts = _facts("mother", {"handshape": verdict("handshape", False, predicted="1", target="5")})
+    prompt = _prompt(facts)
+    assert "'1'" in prompt
+    assert "'5'" in prompt
 
 
 # ---- fail-open behavior, no real token/network needed ---------------------------
