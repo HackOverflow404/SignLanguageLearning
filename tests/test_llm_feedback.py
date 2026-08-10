@@ -39,6 +39,12 @@ def test_facts_records_wrong_with_readable_name_and_grounded_values():
     assert facts["correct"] == ["movement path"] or facts["correct"] == ["movement"]  # PARAM_NAME value
 
 
+def test_facts_uses_readable_values_not_raw_asl_lex_codes():
+    parameters = {"minor_location": verdict("minor_location", False, predicted="Head", target="HeadAway")}
+    facts = _facts("mother", parameters)
+    assert facts["wrong"] == [{"name": "exact location", "you_signed": "Head", "should_be": "Head Away"}]
+
+
 def test_facts_skips_unjudged_none_verdicts():
     parameters = {"handshape": verdict("handshape", None)}
     facts = _facts("mother", parameters)

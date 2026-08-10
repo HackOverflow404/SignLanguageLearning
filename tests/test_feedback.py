@@ -8,7 +8,7 @@ Runs under pytest OR as a plain script (`python tests/test_feedback.py`).
 """
 from types import SimpleNamespace
 
-from aslcv.generator.feedback import coach_text, focus_parameter
+from aslcv.generator.feedback import coach_text, focus_parameter, readable_value
 
 
 def verdict(parameter, correct, confidence=0.8, predicted="A", target="B"):
@@ -75,6 +75,38 @@ def test_focus_message_states_what_was_signed_and_the_target_value():
     text = coach_text(parameters)
     assert "'1'" in text
     assert "'5'" in text
+
+
+def test_focus_message_uses_readable_not_raw_codes():
+    # the raw ASL-LEX code ('closed_b') must never reach the learner as-is
+    parameters = {"handshape": verdict("handshape", False, confidence=0.9,
+                                        predicted="closed_b", target="open_b")}
+    text = coach_text(parameters)
+    assert "closed_b" not in text and "open_b" not in text
+    assert "Closed B" in text and "Open B" in text
+
+
+# ---- readable_value: formatting only, never a new claim about the code ----------
+
+def test_readable_value_snake_case_handshape():
+    assert readable_value("handshape", "closed_b") == "Closed B"
+    assert readable_value("handshape", "flatspread_5") == "Flatspread 5"
+
+
+def test_readable_value_camel_case_location():
+    assert readable_value("minor_location", "HeadAway") == "Head Away"
+    assert readable_value("minor_location", "TorsoTop") == "Torso Top"
+
+
+def test_readable_value_short_letter_or_digit_codes_stay_short():
+    assert readable_value("handshape", "1") == "1"
+    assert readable_value("handshape", "a") == "A"
+    assert readable_value("handshape", "s") == "S"
+
+
+def test_readable_value_repeated_movement_is_plain_english():
+    assert readable_value("repeated_movement", "True") == "repeats"
+    assert readable_value("repeated_movement", "False") == "does not repeat"
 
 
 if __name__ == "__main__":

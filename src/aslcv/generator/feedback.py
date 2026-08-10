@@ -10,9 +10,41 @@ no reason to depend on the grading package, only on the shape of its output.
 already computed by the grader -- this module's whole job is surfacing them,
 never inventing anything: "you signed X, the target is Y" is strictly a
 readout of two pre-computed, grounded facts, not ASL knowledge this module
-originates.
+originates. `readable_value` below formats those raw ASL-LEX codes (e.g.
+`closed_b`, `HeadAway`) into legible text -- spacing, capitalization only,
+never a description of how to physically form them (that would be asserting
+ASL knowledge needing Deaf review per CLAUDE.md, which this deliberately
+does not do).
 """
 from __future__ import annotations
+
+import re
+
+# ASL-LEX phonology codes come in two raw shapes: snake_case ('closed_b',
+# 'flatspread_5') and PascalCase ('HeadAway', 'TorsoTop'). Both are spaced
+# into words and re-cased below -- pure formatting of the existing grounded
+# code, not a new claim about what the code means.
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+# repeated_movement's raw values are the literal Python bool strings
+# "True"/"False" -- reads oddly inline ("the target is 'True'"), so this is
+# the one parameter with its own small, still purely-mechanical rewrite.
+_REPEATED_VALUES = {"True": "repeats", "False": "does not repeat"}
+
+
+def readable_value(parameter: str, value: str) -> str:
+    """A raw phonology label code, formatted for a learner to actually read.
+    `closed_b` -> `Closed B`, `HeadAway` -> `Head Away`, `flatspread_5` ->
+    `Flatspread 5`, `1`/`a`/`s` -> `1`/`A`/`S` (already the standard short
+    names ASL handshape charts use for letter/number handshapes). For
+    `repeated_movement`, "True"/"False" -> "repeats"/"does not repeat"."""
+    if parameter == "repeated_movement":
+        return _REPEATED_VALUES.get(value, value)
+    if not value:
+        return value
+    spaced = _CAMEL_BOUNDARY.sub(" ", value.replace("_", " "))
+    return " ".join(w.upper() if len(w) <= 2 else w.capitalize() for w in spaced.split())
+
 
 PARAM_NAME = {
     "handshape": "handshape",
@@ -48,8 +80,10 @@ def coach_text(parameters) -> str:
         return _PRAISE
 
     focus = max(wrong, key=lambda v: v.confidence)
+    signed = readable_value(focus.parameter, focus.predicted)
+    target = readable_value(focus.parameter, focus.target)
     msg = (f"Focus on your {PARAM_NAME[focus.parameter]}: you signed "
-           f"'{focus.predicted}', the target is '{focus.target}' -- {PARAM_TIP[focus.parameter]}.")
+           f"'{signed}', the target is '{target}' -- {PARAM_TIP[focus.parameter]}.")
     others = [v.parameter for v in wrong if v is not focus]
     if others:
         msg += " Also off: " + ", ".join(PARAM_NAME[p] for p in others) + "."

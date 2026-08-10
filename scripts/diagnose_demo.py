@@ -57,7 +57,7 @@ import numpy as np
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
-from aslcv.generator.feedback import focus_parameter
+from aslcv.generator.feedback import focus_parameter, readable_value
 from aslcv.generator.llm_feedback import coach_text_maybe_llm
 from aslcv.generator.sentence_prompts import sentence_prompt_maybe_llm
 from aslcv.grading.embedding_grader import EmbeddingGrader
@@ -238,13 +238,15 @@ def draw_verdict(canvas, result, target_sign, stale, n_win, win_cap, fps, grade_
             tag, color = _tag_and_color(v)
             if stale:
                 color = tuple(c // 2 for c in color)
+            predicted = readable_value(p, v.predicted)
             if v.correct is False:
                 # OFF: show what was actually signed vs. the target's true
                 # grounded value (ASL-LEX/curriculum), not just a bare tag --
                 # this is what makes the verdict actionable, not just a score.
-                line = f"{PARAM_LABEL[p]:<10} you:{v.predicted:<9} want:{v.target:<9} [{tag}] {v.confidence:.0%}"
+                target = readable_value(p, v.target)
+                line = f"{PARAM_LABEL[p]:<10} you:{predicted:<9} want:{target:<9} [{tag}] {v.confidence:.0%}"
             else:
-                line = f"{PARAM_LABEL[p]:<10} {v.predicted:<12} [{tag}] {v.confidence:.0%}"
+                line = f"{PARAM_LABEL[p]:<10} {predicted:<12} [{tag}] {v.confidence:.0%}"
             cv2.putText(canvas, line, (14, y), FONT, 0.5, color, 1)
             y += 26
 

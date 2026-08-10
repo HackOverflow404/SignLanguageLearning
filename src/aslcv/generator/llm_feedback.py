@@ -31,7 +31,7 @@ a live session -- the live diagnostic loop must never hang on a network call.
 from __future__ import annotations
 
 from ._hf_client import DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT, resolve_token
-from .feedback import PARAM_NAME, coach_text
+from .feedback import PARAM_NAME, coach_text, readable_value
 
 _warned_no_token = False
 
@@ -42,14 +42,18 @@ def _facts(target_sign: str, parameters) -> dict:
     grader's own classification of the attempt) and `should_be` (the target
     sign's true ASL-LEX/curriculum label) -- both already computed by
     `EmbeddingGrader.grade_against`, never invented here or by the LLM this
-    feeds into."""
+    feeds into. Both go through `readable_value` first (formatting only --
+    `closed_b` -> `Closed B` -- never a new claim), so the LLM is never asked
+    to phrase a raw jargon code like the learner would otherwise see."""
     verdicts = list(parameters.values()) if hasattr(parameters, "values") else list(parameters)
     judged = [v for v in verdicts if v.correct is not None]
     return {
         "target_sign": target_sign,
         "all_correct": bool(judged) and all(v.correct for v in judged),
         "wrong": [
-            {"name": PARAM_NAME[v.parameter], "you_signed": v.predicted, "should_be": v.target}
+            {"name": PARAM_NAME[v.parameter],
+             "you_signed": readable_value(v.parameter, v.predicted),
+             "should_be": readable_value(v.parameter, v.target)}
             for v in judged if v.correct is False
         ],
         "correct": [PARAM_NAME[v.parameter] for v in judged if v.correct is True],
