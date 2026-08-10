@@ -31,8 +31,30 @@ a live session -- the live diagnostic loop must never hang on a network call.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from .feedback import PARAM_NAME, coach_text
+
+# Repo root: src/aslcv/generator/llm_feedback.py -> generator -> aslcv -> src -> root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _load_dotenv() -> None:
+    """Best-effort load of a repo-root `.env` (KEY=VALUE per line, gitignored --
+    see `.env.example`) into os.environ. No dependency on python-dotenv: this
+    project's `uv`-tracked dependencies are fragile enough already (CLAUDE.md
+    known issue #13) to not add one just for this. Real env vars always win --
+    setdefault only fills in what isn't already set."""
+    env_path = _REPO_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
 
 # Qwen2.5-7B-Instruct: small enough to be cheap/fast for a one-sentence
 # phrasing call, strong instruction-following for its size, widely available
@@ -85,6 +107,7 @@ def llm_coach_text(target_sign: str, parameters, token: "str | None" = None,
     treat None as "fall back to coach_text(parameters)", never as an error to
     surface to the learner."""
     global _warned_no_token
+    _load_dotenv()
     token = token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     if not token:
         if not _warned_no_token:

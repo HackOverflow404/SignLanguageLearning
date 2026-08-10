@@ -10,6 +10,7 @@ import types
 from types import SimpleNamespace
 
 from aslcv.generator.feedback import coach_text
+from aslcv.generator import llm_feedback
 from aslcv.generator.llm_feedback import _facts, _prompt, coach_text_maybe_llm, llm_coach_text
 
 
@@ -48,6 +49,62 @@ def test_prompt_never_asks_the_model_to_judge_correctness():
     prompt = _prompt(facts)
     assert "phrase" in prompt.lower()
     assert "not an asl expert" in prompt.lower() or "not add any asl knowledge" in prompt.lower()
+
+
+# ---- repo-local .env loader ------------------------------------------------------
+
+def _with_temp_repo_root(env_file_contents):
+    """Context-manager-free helper: patches llm_feedback._REPO_ROOT to a fresh
+    temp dir (optionally containing a .env), yields it, restores after."""
+    import contextlib
+    import os
+    import tempfile
+    from pathlib import Path
+
+    @contextlib.contextmanager
+    def _ctx():
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            if env_file_contents is not None:
+                (root / ".env").write_text(env_file_contents)
+            original_root = llm_feedback._REPO_ROOT
+            llm_feedback._REPO_ROOT = root
+            try:
+                yield root
+            finally:
+                llm_feedback._REPO_ROOT = original_root
+
+    return _ctx()
+
+
+def test_load_dotenv_sets_unset_env_vars():
+    import os
+    os.environ.pop("HF_TOKEN", None)
+    os.environ.pop("QUOTED", None)
+    try:
+        with _with_temp_repo_root('HF_TOKEN=from-dotenv\n# a comment\nQUOTED="value"\n'):
+            llm_feedback._load_dotenv()
+            assert os.environ["HF_TOKEN"] == "from-dotenv"
+            assert os.environ["QUOTED"] == "value"
+    finally:
+        os.environ.pop("HF_TOKEN", None)
+        os.environ.pop("QUOTED", None)
+
+
+def test_load_dotenv_never_overrides_a_real_env_var():
+    import os
+    os.environ["HF_TOKEN"] = "from-real-env"
+    try:
+        with _with_temp_repo_root("HF_TOKEN=from-dotenv\n"):
+            llm_feedback._load_dotenv()
+            assert os.environ["HF_TOKEN"] == "from-real-env"
+    finally:
+        os.environ.pop("HF_TOKEN", None)
+
+
+def test_load_dotenv_missing_file_is_a_noop():
+    with _with_temp_repo_root(None):
+        llm_feedback._load_dotenv()  # must not raise
 
 
 # ---- fail-open behavior, no real token/network needed ---------------------------
