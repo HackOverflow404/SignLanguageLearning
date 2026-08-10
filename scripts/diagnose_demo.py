@@ -47,7 +47,8 @@ import numpy as np
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
-from aslcv.generator.feedback import coach_text, focus_parameter
+from aslcv.generator.feedback import focus_parameter
+from aslcv.generator.llm_feedback import coach_text_maybe_llm
 from aslcv.grading.embedding_grader import EmbeddingGrader
 from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 from aslcv.learner.mastery import MasteryState
@@ -375,7 +376,8 @@ def run_live(args):
                     correct_by_parameter = {p: v.correct for p, v in result.parameters.items()}
                     mastery.update(state["target"], correct_by_parameter)
                     mastery.save(args.mastery_path)
-                    print(f"  [{state['target']}] {coach_text(result.parameters)}")
+                    text = coach_text_maybe_llm(state["target"], result.parameters, use_llm=args.llm_feedback)
+                    print(f"  [{state['target']}] {text}")
                     wrong_parameter = focus_parameter(result.parameters)
                 next_sign = pick_next(mastery, pool_signs, last_sign=state["target"],
                                        last_wrong_parameter=wrong_parameter, minimal_pairs=minimal_pairs)
@@ -478,6 +480,10 @@ def main():
                          "falls back to CPU automatically if unavailable on this machine)")
     ap.add_argument("--mastery-path", type=Path, default=DEFAULT_MASTERY_PATH,
                     help="Phase 6 learner-state JSON (persists across sessions; missing file = fresh learner)")
+    ap.add_argument("--llm-feedback", action="store_true",
+                    help="phrase [n]'s coaching line via HuggingFace's hosted Inference API "
+                         "(needs HF_TOKEN set) instead of the templated text; falls back to "
+                         "templated text automatically on any missing token/network/API failure")
     ap.add_argument("--selftest", action="store_true", help="no camera: verify the whole path on cached val clips")
     add_pipeline_args(ap)
     args = ap.parse_args()

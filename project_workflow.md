@@ -58,13 +58,18 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 >
 > **Phase 6 v1 is now also wired end to end** (see Phase 6 status): a persisted
 > per-sign/per-parameter learner model, a gap-targeting + recency-biased scheduler
-> with automatic contrastive minimal-pair drills, and templated coaching feedback,
-> all live in `diagnose_demo.py` — `n` now records the current attempt and adaptively
-> picks the next target instead of blind list-cycling. Deliberately v1-scoped: a
-> heuristic, not a real spaced-repetition interval algorithm; templated text, not an
-> LLM coach; still a script, not a packaged `app/`. What's open: actual fluent Deaf
-> review of Phase 5b's engine output (a human bottleneck, not code), and Phase 6's own
-> deferred pieces (LLM sentence prompts, difficulty control, an LLM feedback pass).
+> with automatic contrastive minimal-pair drills, and coaching feedback (templated
+> by default; `--llm-feedback` opts into an LLM phrasing pass over the same facts
+> via HuggingFace's hosted Inference API), all live in `diagnose_demo.py` — `n` now
+> records the current attempt and adaptively picks the next target instead of
+> blind list-cycling. Deliberately v1-scoped: a heuristic, not a real
+> spaced-repetition interval algorithm; still a script, not a packaged `app/`.
+> **Phase 8 (porting to a phone) is now also scoped**, deliberately not started —
+> see its section below for what of the current stack is resource-appropriate for
+> a phone (most of it) vs. what's real unstarted porting work (most of the actual
+> code). What's open: actual fluent Deaf review of Phase 5b's engine output (a
+> human bottleneck, not code), Phase 6's own remaining deferred pieces (LLM
+> sentence prompts, difficulty control), and Phase 8 itself.
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -1126,34 +1131,55 @@ session.
   next. LLM-generated sentence prompts remain v2, unchanged from the original
   scoping — Phase 5a's retrieval and Phase 5b's rule engine exist now to
   support that when it's built, but it isn't yet.
-- **Feedback presenter — DONE (templated, not LLM).**
-  `src/aslcv/generator/feedback.py`'s `coach_text`: one line, praise if every
-  judged parameter matched, otherwise names the SINGLE most-confidently-wrong
-  parameter with a short tip (an instructor gives one correction at a time,
-  not five at once) and briefly lists any other misses. Duck-typed on
-  `.parameter`/`.correct`/`.confidence` — no dependency on the grading
-  package's dataclass, just its shape, so this module (and its tests) never
-  load torch or a checkpoint. `focus_parameter` factors out the "which
+- **Feedback presenter — DONE, both templated (default) and an optional LLM
+  pass.** `src/aslcv/generator/feedback.py`'s `coach_text`: one line, praise if
+  every judged parameter matched, otherwise names the SINGLE
+  most-confidently-wrong parameter with a short tip (an instructor gives one
+  correction at a time, not five at once) and briefly lists any other misses.
+  Duck-typed on `.parameter`/`.correct`/`.confidence` — no dependency on the
+  grading package's dataclass, just its shape, so this module (and its tests)
+  never load torch or a checkpoint. `focus_parameter` factors out the "which
   parameter would coach_text focus on" signal so the scheduler's contrastive
-  trigger doesn't have to re-derive it or parse prose.
+  trigger doesn't have to re-derive it or parse prose. `llm_feedback.py`'s
+  `coach_text_maybe_llm` is the optional upgrade, opt-in via
+  `diagnose_demo.py --llm-feedback`: phrases the SAME pre-computed facts more
+  naturally via HuggingFace's HOSTED Inference API
+  (`huggingface_hub.InferenceClient`, `Qwen/Qwen2.5-7B-Instruct` default,
+  `provider="auto"`) — deliberately the hosted API, not a locally-run model,
+  because of the Phase 8 mobile target below: a phone can't run even a small
+  open LLM the way this desktop process could, so code built against the
+  hosted API now is close to what a phone client will actually do, where code
+  built around local `transformers` inference would have been thrown away.
+  CLAUDE.md's "an LLM only ever touches English" rule is enforced
+  structurally: the model is handed only pre-computed facts (target sign,
+  which parameter(s) were wrong, confidence) and instructed to phrase them,
+  never asked to judge correctness or shown raw attempt data. Fail-open by
+  design: no `HF_TOKEN`, no `huggingface_hub`, a network error, a timeout, or
+  a malformed response all fall back to the templated `coach_text` (one
+  warning printed once), never block or crash the live loop. 10 new tests
+  (`tests/test_llm_feedback.py`) cover the fail-open paths for real (no
+  token needed) and a successful call via a mocked client (no network
+  needed).
 - **Closed loop, wired end to end in `diagnose_demo.py`.** `c` is unchanged
   (clear the window, retry the SAME target, last verdict stays on screen
   dimmed). `n` is now the adaptive step, not blind list-cycling: records the
   CURRENT non-stale verdict into `MasteryState` (a stale verdict is a re-sign
   in progress, not a completed attempt — never double-scored), saves to disk,
-  prints one line of coaching, then calls `pick_next` for the next target —
-  console-prints the reason when a contrastive drill fires, and the on-screen
-  target line now shows live mastery (`TARGET: mother   mastery 62%`).
-  `resolve_targets`'s fail-closed reference-clip validation is unchanged and
-  still gates the whole pool up front. 22 new tests
-  (`tests/test_mastery.py`, `tests/test_scheduler.py`, `tests/test_feedback.py`
-  — pure logic + real phonology data, no torch/checkpoint needed for the
-  first two), full suite **236 passed / 10 skipped** (up from 214/10).
+  prints one line of coaching (templated or LLM-phrased per `--llm-feedback`),
+  then calls `pick_next` for the next target — console-prints the reason when
+  a contrastive drill fires, and the on-screen target line now shows live
+  mastery (`TARGET: mother   mastery 62%`). `resolve_targets`'s fail-closed
+  reference-clip validation is unchanged and still gates the whole pool up
+  front. 32 new tests total (`tests/test_mastery.py`, `tests/test_scheduler.py`,
+  `tests/test_feedback.py`, `tests/test_llm_feedback.py` — pure logic + real
+  phonology data + mocked network, no real torch/checkpoint/token/network
+  needed for any of them), full suite **246 passed / 10 skipped** (up from
+  214/10).
 - **Produces:** a working adaptive tutor for isolated signs (v1) — not yet
   packaged as `app/` (still a script), not yet difficulty-aware, not yet
-  spaced-repetition-scheduled in the interval-algorithm sense, not yet
-  LLM-phrased. All four are legitimate, scoped-out-on-purpose follow-ups, not
-  gaps that block "done when" below.
+  spaced-repetition-scheduled in the interval-algorithm sense. Both are
+  legitimate, scoped-out-on-purpose follow-ups, not gaps that block "done
+  when" below.
 - **Done when:** the app chooses what to practice from the learner's gaps
   (**yes**), drills (**yes, isolated + contrastive**), corrects at parameter
   level (**yes**), and adapts across a session (**yes, persisted across
@@ -1166,6 +1192,84 @@ session.
   sequences, not just isolated signs. The genuinely hard perception step — stage
   only after v1 works.
 - Combine with Phase 5's sentence prompts + rule-composed targets.
+
+### Phase 8 — Port to a phone — status: not started, scoped only
+
+Everything through Phase 7 is a desktop/dev-machine prototype: Python scripts, a
+local webcam, a local file cache. The product is meant to run on a phone. This
+phase is that port — deliberately scoped now (so later decisions don't paint the
+project into a corner) but not started, and not to be started until the desktop
+tutor (Phases 0-7) is functionally complete. It's a different engineering
+discipline (mobile app development, different languages/runtimes) layered on
+top of the ML/data work above, not a continuation of it.
+
+**The resource/complexity question, answered directly (asked explicitly before
+this phase was written up): yes** — everything in the CURRENT stack (excluding
+the rtmlib backends, which were evaluated and not carried forward regardless of
+this phase) is algorithmically light enough for phone-class hardware. This is a
+statement about compute/memory budget, not about the existing Python code being
+reusable — none of it ships as-is; see the porting work below.
+- **MediaPipe Holistic** is Google's own mobile-first architecture (BlazePose),
+  with official GPU/NPU-accelerated Android and iOS SDKs — this is its flagship
+  use case, shipped in production apps today. The `.task` model files already in
+  `models/` (`pose_landmarker_full.task`, `face_landmarker.task`,
+  `hand_landmarker.task`) are the same cross-platform bundle format MediaPipe
+  uses on mobile, so they are plausibly reusable as-is, not just the architecture.
+  Running three landmarkers (pose+face+hands) every frame is heavier than a
+  single-model mobile CV app, but still well inside what current phones handle
+  in real products — a genuine, if previously unstated, point in MediaPipe's
+  favor on top of its accuracy/stability lead from Phase 3.
+- **`normalizer/`/`features.py`** is plain anchor-based geometry and NumPy math
+  (selection, concatenation, velocity, standardization) over ~550 keypoints —
+  computationally trivial regardless of implementation language; a phone CPU
+  does this in microseconds.
+- **`EmbeddingGrader`'s `PoseGraderNet`** (multi-stream BiGRU + 5 small linear
+  heads, no attention/transformer, no large embedding tables) is architecturally
+  a small model relative to on-device budgets — nowhere near LLM or vision-
+  transformer scale. Inference over a ~60-frame window is cheap.
+- **The LLM feedback call** (`generator/llm_feedback.py`) is a hosted API call
+  by design (see below) — zero on-device compute, exactly what a phone client
+  would do.
+- **The gloss rule engine** (spaCy-backed) is the one piece that ISN'T
+  per-frame/real-time-critical — it runs once per sentence prompt, not once per
+  video frame — so it's a real candidate to simply stay server-side rather than
+  be ported to an on-device NLP toolkit (see below).
+
+**What that resource-feasibility answer does NOT cover — the actual porting
+work, all unstarted:**
+1. **Replace the Python Tasks API with MediaPipe's native Android/iOS SDK.**
+   Current code (`extractor/mediapipe.py`) uses the desktop/server Python Tasks
+   API; a phone app needs the Kotlin/Swift native SDK instead. The `.task` model
+   files likely carry over; the Python wrapper code does not.
+2. **Reimplement `normalizer/`/`features.py` natively.** The math is simple
+   enough to be a tractable, bounded port (not a research problem), but it's a
+   real rewrite in Kotlin/Swift (or a shared C++ core bridged to both), not
+   reused Python.
+3. **Export/convert `PoseGraderNet` to a mobile inference runtime** — PyTorch
+   Mobile, ExecuTorch, CoreML, or TFLite. Untested; the main concrete risk is
+   the BiGRU's export path (variable-length sequence handling is a known rough
+   edge for some of these converters) — needs a proof-of-concept export before
+   this is treated as a solved problem, not assumed to "just work."
+4. **Decide how reference clips reach the phone.** `data/cache/`'s local file
+   layout (1,874 clips) doesn't fit in an app bundle as-is. Needs a real
+   decision: bundle a curated subset, stream from a CDN, or download-and-cache
+   on first use. A product/infra question, not an ML one.
+5. **Decide where the gloss engine runs.** Recommended: keep it server-side
+   (English sentence in, gloss sequence out) rather than port spaCy to an
+   on-device NLP toolkit — it's not latency-critical the way per-frame pose
+   extraction is, so there's no forced reason to put it on-device. Still a
+   fail-closed rule engine either way; "server-side" changes where it runs, not
+   what it is or CLAUDE.md's "never an LLM" constraint on it.
+6. **Learner state storage** (`learner/mastery.py`'s JSON file) has an obvious
+   phone-native equivalent (local app-sandbox storage — SQLite, a JSON file in
+   app storage, platform prefs) — a straightforward port, not a design problem,
+   noted here only so it isn't forgotten as one of the pieces that moves.
+- **Produces:** a real phone app, functionally equivalent to the Phase 6
+  desktop tutor.
+- **Done when:** the full loop (extract → normalize → grade → diagnose →
+  adapt → coach) runs natively on a phone at usable latency, with reference
+  clips actually reaching the device and the LLM feedback call working over a
+  real mobile network path.
 
 ---
 
@@ -1242,11 +1346,16 @@ session.
                         #   random gap-targeting + recency, or an automatic
                         #   contrastive drill when the last mistake has a real
                         #   partner sign)
-      generator/       # Phase 6 v1 — DONE for isolated + contrastive drills;
-                        #   LLM sentence prompts still v2, unbuilt
+      generator/       # Phase 6 v1 — DONE for isolated + contrastive drills +
+                        #   feedback (templated + optional LLM); LLM sentence
+                        #   prompts still v2, unbuilt
         feedback.py    #   coach_text/focus_parameter: templated English
                         #   coaching from a graded attempt, duck-typed on
                         #   ParameterVerdict's shape (no grading-package import)
+        llm_feedback.py #   coach_text_maybe_llm: optional LLM phrasing pass
+                        #   over the SAME facts, via HuggingFace's hosted
+                        #   Inference API (not a local model -- see Phase 8);
+                        #   fails open to feedback.coach_text on any error
     scripts/           # DONE — extract_landmarks.py (extract, records provenance),
                        #   verify_cache.py (integrity + provenance/staleness), render_clip.py
                        #   (draw cached poses back onto video for eyeballing), eval_slice.py

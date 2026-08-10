@@ -24,6 +24,7 @@ dependencies = [
     "rtmlib>=0.0.15",
     "spacy>=3.8.14",
     "click>=8.4.2",
+    "huggingface-hub>=1.27.0",
 ]
 
 [project.scripts]
