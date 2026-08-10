@@ -29,9 +29,18 @@ ASL correctness -- "all correct" means "matched the reference," not "fluent." A
 target with no cached reference clip is refused outright (fail-closed), never graded
 without something on screen to imitate.
 
+Two optional HuggingFace-hosted-API upgrades, both opt-in and fail-open (need
+HF_TOKEN -- see .env.example -- and fall back to nothing/templated-text silently
+on any missing token/network/API failure): `--llm-feedback` phrases the coaching
+line more naturally; `--sentence-prompts` shows an LLM-written example sentence
+using each target's word, gloss-composed and accepted by the fail-closed rule
+engine before ever being displayed (aslcv.generator.sentence_prompts) --
+presentational only, still not graded (continuous-sentence grading is Phase 7).
+
     .venv/bin/python scripts/diagnose_demo.py                       # mediapipe, adaptive over the default pool
     .venv/bin/python scripts/diagnose_demo.py --target father        # start on father, [n] still adapts onward
     .venv/bin/python scripts/diagnose_demo.py --targets you,me,water
+    .venv/bin/python scripts/diagnose_demo.py --sentence-prompts     # + LLM example sentences per target
     .venv/bin/python scripts/diagnose_demo.py --selftest             # no camera: verify the whole path offline
 """
 import argparse
@@ -49,6 +58,7 @@ from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
 from aslcv.generator.feedback import focus_parameter
 from aslcv.generator.llm_feedback import coach_text_maybe_llm
+from aslcv.generator.sentence_prompts import sentence_prompt_maybe_llm
 from aslcv.grading.embedding_grader import EmbeddingGrader
 from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 from aslcv.learner.mastery import MasteryState
@@ -286,6 +296,14 @@ def run_live(args):
         state["target"] = sign
         print(f"target -> {sign}  (mastery {mastery.sign_mastery(sign):.0%}, "
               f"reference clip: {row['video_id']}, {len(frames)} frames)")
+        if args.sentence_prompts:
+            # Blocking (same tradeoff already accepted for --llm-feedback):
+            # this is an opt-in flag on a dev-machine demo script, not a
+            # production UI -- see project_workflow.md's Phase 8 for what
+            # "production" would actually require.
+            seq = sentence_prompt_maybe_llm(sign)
+            if seq is not None:
+                print(f"  example: \"{seq.english}\" -> {seq.render()}")
 
     switch_target(pool_signs[0])
 
@@ -484,6 +502,12 @@ def main():
                     help="phrase [n]'s coaching line via HuggingFace's hosted Inference API "
                          "(needs HF_TOKEN set) instead of the templated text; falls back to "
                          "templated text automatically on any missing token/network/API failure")
+    ap.add_argument("--sentence-prompts", action="store_true",
+                    help="show an LLM-written example sentence using each target's word, "
+                         "gloss-composed and validated by the fail-closed rule engine before "
+                         "display (needs HF_TOKEN set); presentational only, not graded; "
+                         "silently skipped on any missing token/network/API failure or if the "
+                         "rule engine refuses every attempt")
     ap.add_argument("--selftest", action="store_true", help="no camera: verify the whole path on cached val clips")
     add_pipeline_args(ap)
     args = ap.parse_args()

@@ -64,12 +64,19 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 > records the current attempt and adaptively picks the next target instead of
 > blind list-cycling. Deliberately v1-scoped: a heuristic, not a real
 > spaced-repetition interval algorithm; still a script, not a packaged `app/`.
-> **Phase 8 (porting to a phone) is now also scoped**, deliberately not started —
-> see its section below for what of the current stack is resource-appropriate for
-> a phone (most of it) vs. what's real unstarted porting work (most of the actual
-> code). What's open: actual fluent Deaf review of Phase 5b's engine output (a
-> human bottleneck, not code), Phase 6's own remaining deferred pieces (LLM
-> sentence prompts, difficulty control), and Phase 8 itself.
+> **Sentence prompts (the last Phase 6 v2 piece originally deferred) are now also
+> built**: `--sentence-prompts` has the LLM write an English sentence containing
+> the target word, then hands it to Phase 5b's already-fail-closed rule engine —
+> only an engine-accepted sentence is ever shown, so the LLM's English never
+> becomes displayed ASL content on its own say-so. HF_TOKEN now also resolves
+> from a gitignored repo-root `.env` (`.env.example`), not just the shell
+> environment, at the user's request to keep secrets inside the repo's own
+> directory. **Phase 8 (porting to a phone) is now also scoped**, deliberately
+> not started — see its section below for what of the current stack is
+> resource-appropriate for a phone (most of it) vs. what's real unstarted porting
+> work (most of the actual code). What's open: actual fluent Deaf review of
+> Phase 5b's engine output (a human bottleneck, not code), Phase 6's one
+> remaining deferred piece (difficulty control), and Phase 8 itself.
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -1116,8 +1123,8 @@ session.
   starved). "Difficulty control" from the original spec is NOT implemented —
   there's no notion of drill difficulty in v1, only which sign/parameter to
   target next.
-- **Task generator (isolated + contrastive) — DONE; sentence prompts deferred
-  to v2 as originally scoped.** `find_minimal_pairs` re-derives the same
+- **Task generator (isolated + contrastive + sentence prompts) — ALL DONE,
+  sentence prompts now built too.** `find_minimal_pairs` re-derives the same
   differ-in-exactly-one-parameter pairing `eval_minimal_pairs.py` uses for the
   accuracy screen (re-derived, not imported — that's script code, this is
   library code the live session imports), scoped to the active target pool
@@ -1128,9 +1135,37 @@ session.
   pool — verified end to end on real data, not just unit tests: grading a
   real `father` clip against `mother` (the curriculum's built-in
   `minor_location` minimal pair) correctly queues `father` right back up
-  next. LLM-generated sentence prompts remain v2, unchanged from the original
-  scoping — Phase 5a's retrieval and Phase 5b's rule engine exist now to
-  support that when it's built, but it isn't yet.
+  next.
+
+  **LLM-generated sentence prompts — DONE**, opt-in via `diagnose_demo.py
+  --sentence-prompts`. `src/aslcv/generator/sentence_prompts.py`'s
+  `sentence_prompt_maybe_llm` composes the two already-finished pieces this
+  was always going to need (Phase 5a's retrieval, Phase 5b's rule engine)
+  rather than adding a third path: it asks the LLM to write ONE short English
+  sentence containing the current target's word (constrained to
+  curriculum.yaml's own `english_lemmas` vocabulary as an allow-list, to
+  raise — not guarantee — the acceptance rate), then hands that sentence to
+  Phase 5b's `gloss_rules.gloss_sentence()` exactly as a human-typed sentence
+  would go through it. Only if the ALREADY fail-closed rule engine accepts it
+  in scope does it ever become a displayed prompt (up to `max_attempts=2`
+  retries on refusal, then silently nothing — never a partial or
+  unvalidated sentence shown as ASL content). This is CLAUDE.md's "an LLM
+  only ever touches English" and "grammar is a rule engine, not a trained
+  model" enforced TOGETHER, structurally: the LLM only ever supplies English
+  wording, and the deterministic rule engine — not the LLM's own obedience to
+  its prompt — is what actually decides whether that wording becomes
+  displayed ASL content. Presentational only, NOT graded: shows the learner
+  an example sentence using their target word, glossed and NMM-tagged, to
+  read as an English → ASL composition example; continuous-sentence grading
+  is still Phase 7, unbuilt, so `diagnose_demo.py` keeps grading only the
+  isolated target sign exactly as before this existed. Same hosted-API/
+  fail-open pattern as `llm_feedback.py` (`Qwen/Qwen2.5-7B-Instruct`,
+  `provider="auto"`, needs `HF_TOKEN`) — sharing a new `_hf_client.py` for
+  the token/`.env` resolution logic both modules need identically, rather
+  than risking two copies drifting apart. Blocking, same accepted tradeoff as
+  `--llm-feedback`: this is a dev-machine demo script, not a production UI.
+  22 new tests (`tests/test_sentence_prompts.py`, `tests/test_hf_client.py`),
+  full suite **263 passed / 10 skipped**.
 - **Feedback presenter — DONE, both templated (default) and an optional LLM
   pass.** `src/aslcv/generator/feedback.py`'s `coach_text`: one line, praise if
   every judged parameter matched, otherwise names the SINGLE
@@ -1170,11 +1205,15 @@ session.
   a contrastive drill fires, and the on-screen target line now shows live
   mastery (`TARGET: mother   mastery 62%`). `resolve_targets`'s fail-closed
   reference-clip validation is unchanged and still gates the whole pool up
-  front. 32 new tests total (`tests/test_mastery.py`, `tests/test_scheduler.py`,
-  `tests/test_feedback.py`, `tests/test_llm_feedback.py` — pure logic + real
-  phonology data + mocked network, no real torch/checkpoint/token/network
-  needed for any of them), full suite **246 passed / 10 skipped** (up from
-  214/10).
+  front. Switching targets also prints an LLM sentence prompt when
+  `--sentence-prompts` is on (see the task-generator bullet above). 54 new
+  tests total across Phase 6 v1 + v2 (`tests/test_mastery.py`,
+  `tests/test_scheduler.py`, `tests/test_feedback.py`,
+  `tests/test_llm_feedback.py`, `tests/test_hf_client.py`,
+  `tests/test_sentence_prompts.py` — pure logic + real phonology/curriculum
+  data + mocked network, no real torch/checkpoint/token/network needed for
+  any of them), full suite **263 passed / 10 skipped** (up from 214/10 before
+  Phase 6).
 - **Produces:** a working adaptive tutor for isolated signs (v1) — not yet
   packaged as `app/` (still a script), not yet difficulty-aware, not yet
   spaced-repetition-scheduled in the interval-algorithm sense. Both are
@@ -1346,16 +1385,22 @@ work, all unstarted:**
                         #   random gap-targeting + recency, or an automatic
                         #   contrastive drill when the last mistake has a real
                         #   partner sign)
-      generator/       # Phase 6 v1 — DONE for isolated + contrastive drills +
-                        #   feedback (templated + optional LLM); LLM sentence
-                        #   prompts still v2, unbuilt
+      generator/       # Phase 6 v1 + v2 — ALL DONE: isolated + contrastive
+                        #   drills, feedback (templated + optional LLM), and
+                        #   LLM sentence prompts (gloss-engine-gated)
         feedback.py    #   coach_text/focus_parameter: templated English
                         #   coaching from a graded attempt, duck-typed on
                         #   ParameterVerdict's shape (no grading-package import)
+        _hf_client.py   #   shared .env/HF_TOKEN resolution for llm_feedback.py
+                        #   + sentence_prompts.py (one place, not two copies)
         llm_feedback.py #   coach_text_maybe_llm: optional LLM phrasing pass
                         #   over the SAME facts, via HuggingFace's hosted
                         #   Inference API (not a local model -- see Phase 8);
                         #   fails open to feedback.coach_text on any error
+        sentence_prompts.py # sentence_prompt_maybe_llm: LLM writes English
+                        #   containing the target word; Phase 5b's fail-closed
+                        #   gloss_rules.gloss_sentence() -- not the LLM -- is
+                        #   what decides whether it's ever displayed
     scripts/           # DONE — extract_landmarks.py (extract, records provenance),
                        #   verify_cache.py (integrity + provenance/staleness), render_clip.py
                        #   (draw cached poses back onto video for eyeballing), eval_slice.py

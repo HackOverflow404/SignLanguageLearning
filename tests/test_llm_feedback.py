@@ -10,8 +10,9 @@ import types
 from types import SimpleNamespace
 
 from aslcv.generator.feedback import coach_text
-from aslcv.generator import llm_feedback
 from aslcv.generator.llm_feedback import _facts, _prompt, coach_text_maybe_llm, llm_coach_text
+
+from _hf_test_utils import no_ambient_hf_token
 
 
 def verdict(parameter, correct, confidence=0.8):
@@ -51,80 +52,31 @@ def test_prompt_never_asks_the_model_to_judge_correctness():
     assert "not an asl expert" in prompt.lower() or "not add any asl knowledge" in prompt.lower()
 
 
-# ---- repo-local .env loader ------------------------------------------------------
-
-def _with_temp_repo_root(env_file_contents):
-    """Context-manager-free helper: patches llm_feedback._REPO_ROOT to a fresh
-    temp dir (optionally containing a .env), yields it, restores after."""
-    import contextlib
-    import os
-    import tempfile
-    from pathlib import Path
-
-    @contextlib.contextmanager
-    def _ctx():
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            if env_file_contents is not None:
-                (root / ".env").write_text(env_file_contents)
-            original_root = llm_feedback._REPO_ROOT
-            llm_feedback._REPO_ROOT = root
-            try:
-                yield root
-            finally:
-                llm_feedback._REPO_ROOT = original_root
-
-    return _ctx()
-
-
-def test_load_dotenv_sets_unset_env_vars():
-    import os
-    os.environ.pop("HF_TOKEN", None)
-    os.environ.pop("QUOTED", None)
-    try:
-        with _with_temp_repo_root('HF_TOKEN=from-dotenv\n# a comment\nQUOTED="value"\n'):
-            llm_feedback._load_dotenv()
-            assert os.environ["HF_TOKEN"] == "from-dotenv"
-            assert os.environ["QUOTED"] == "value"
-    finally:
-        os.environ.pop("HF_TOKEN", None)
-        os.environ.pop("QUOTED", None)
-
-
-def test_load_dotenv_never_overrides_a_real_env_var():
-    import os
-    os.environ["HF_TOKEN"] = "from-real-env"
-    try:
-        with _with_temp_repo_root("HF_TOKEN=from-dotenv\n"):
-            llm_feedback._load_dotenv()
-            assert os.environ["HF_TOKEN"] == "from-real-env"
-    finally:
-        os.environ.pop("HF_TOKEN", None)
-
-
-def test_load_dotenv_missing_file_is_a_noop():
-    with _with_temp_repo_root(None):
-        llm_feedback._load_dotenv()  # must not raise
-
-
 # ---- fail-open behavior, no real token/network needed ---------------------------
+# Wrapped in no_ambient_hf_token(): these must hold even on a machine that has
+# a real HF_TOKEN in its shell or in this project's own recommended repo-root
+# `.env` (see .env.example) -- token=None means "pretend nothing is
+# configured," not "whatever this machine happens to have lying around."
 
 def test_no_hf_token_returns_none():
     parameters = {"handshape": verdict("handshape", False)}
-    assert llm_coach_text("mother", parameters, token=None) is None
+    with no_ambient_hf_token():
+        assert llm_coach_text("mother", parameters, token=None) is None
 
 
 def test_coach_text_maybe_llm_false_never_touches_llm_path():
     parameters = {"handshape": verdict("handshape", False, confidence=0.9)}
     # use_llm=False must produce exactly the templated text, with no token at all
-    assert coach_text_maybe_llm("mother", parameters, use_llm=False) == coach_text(parameters)
+    with no_ambient_hf_token():
+        assert coach_text_maybe_llm("mother", parameters, use_llm=False) == coach_text(parameters)
 
 
 def test_coach_text_maybe_llm_falls_back_when_llm_unavailable():
     parameters = {"handshape": verdict("handshape", False, confidence=0.9)}
-    # use_llm=True but no token in this environment -- must still return the
-    # templated text, never None, never raise
-    result = coach_text_maybe_llm("mother", parameters, use_llm=True, token=None)
+    # use_llm=True but no token available -- must still return the templated
+    # text, never None, never raise
+    with no_ambient_hf_token():
+        result = coach_text_maybe_llm("mother", parameters, use_llm=True, token=None)
     assert result == coach_text(parameters)
 
 
