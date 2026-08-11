@@ -1,33 +1,43 @@
 #!/usr/bin/env python3
-"""diagnose_demo.py -- Phase 6 v1: the adaptive loop, live, over Phase 4's
+"""diagnose_demo.py -- Phase 6: the adaptive loop, live, over Phase 4's
 grade_against(attempt, target).
 
 Prompts a target sign, plays that sign's real reference clip on loop next to the live
-webcam view, captures your attempt over a sliding window, and shows the PER-PARAMETER
-diagnosis from EmbeddingGrader.grade_against_poses -- handshape / major_location /
-minor_location / movement / repeated_movement, each MATCH/OFF/insufficient-data with
-the model's confidence, plus overall fidelity. `c` clears the window and re-tries the
-SAME target (the last verdict stays on screen, dimmed, so you can see what changed).
-`n` is the adaptive step: it records the current (non-stale) verdict into a persisted
-per-sign/per-parameter mastery model (aslcv.learner.mastery), prints one line of
-templated coaching (aslcv.generator.feedback) naming the parameter most confidently
-wrong, and picks the next target itself (aslcv.learner.scheduler) -- gap-targeting +
-a light recency bias, or an automatic contrastive minimal-pair drill if the mistake
-has a real partner sign in the current pool (e.g. missing minor_location on `father`
-queues `mother` next). Nothing here is a spaced-repetition interval scheduler or an
-LLM-phrased coach -- see project_workflow.md's Phase 6 section for that v1 scoping.
+webcam view, captures your attempt, and shows the PER-PARAMETER diagnosis from
+EmbeddingGrader.grade_against_poses -- handshape / major_location / minor_location /
+movement / repeated_movement, each MATCH/OFF/insufficient-data with the model's
+confidence, plus overall fidelity. `c` clears the capture and re-tries the SAME target
+(the last verdict stays on screen, dimmed, so you can see what changed). `n` is the
+adaptive step: it records the current (non-stale) verdict into a persisted per-sign/
+per-parameter mastery model (aslcv.learner.mastery), prints one line of coaching
+(aslcv.generator.feedback, or an LLM phrasing under --llm-feedback) naming the
+parameter most confidently wrong, and picks the next target itself
+(aslcv.learner.scheduler) -- gap-targeting + a light recency bias, or an automatic
+contrastive minimal-pair drill if the mistake has a real partner sign in the current
+pool (e.g. missing minor_location on `father` queues `mother` next).
 
-This is scripts/live_demo.py's own scaffolding (webcam loop, sliding window, mirrored-
-DISPLAY-only handling, background-threaded grading, pipeline_config.py wiring) with
-two substantive changes from Phase 2's live_demo.py: the grader is Phase 4's learned
-EmbeddingGrader (grade_against a KNOWN target, not open-set "which sign is this"), and
-Phase 6's mastery/scheduler/feedback loop replaces manual target cycling.
+CAPTURE, not a fixed sliding window (aslcv.capture.CaptureBuffer): a fixed trailing
+window silently evicts its oldest frames as new ones arrive, so a signer slower than
+the window truncates their own attempt -- exactly the kind of corruption that hits
+`repeated_movement` hardest (it needs the full cyclic pattern) and can catch
+`handshape` mid-transition. CaptureBuffer instead grows from the start of motion to a
+natural rest boundary (the SAME hand_motion_energy signal features.py's trim_to_motion
+already uses for cached clips), capped for safety -- READY -> CAPTURING -> CAPTURED,
+shown on screen so you know whether a verdict reflects a complete attempt.
+
+Two always-on, fully grounded (no LLM) text descriptions, sourced from ASL-LEX/
+curriculum phonology data, never invented: `aslcv.generator.sign_description` shows
+what the TARGET sign's handshape/location/movement actually are, at the bottom of the
+reference video; `aslcv.generator.feedback`/`handshape_descriptions` show what a WRONG
+attempt's parameter actually looked like vs. the target, in the coaching line.
 
 HONEST LIMITS (also shown on screen, every frame): this confirms the plumbing and
 lets you practice imitating a real reference clip. It does NOT independently verify
-ASL correctness -- "all correct" means "matched the reference," not "fluent." A
-target with no cached reference clip is refused outright (fail-closed), never graded
-without something on screen to imitate.
+ASL correctness -- "all correct" means "matched the reference," not "fluent," and the
+underlying model's own measured accuracy (PHASE4_REPORT.md) is well short of perfect
+(handshape 80.7%, repeated_movement 82.1% on held-out val clips) -- a wrong verdict is
+often the model, not you. A target with no cached reference clip is refused outright
+(fail-closed), never graded without something on screen to imitate.
 
 Two optional HuggingFace-hosted-API upgrades, both opt-in and fail-open (need
 HF_TOKEN -- see .env.example -- and fall back to nothing/templated-text silently
@@ -45,6 +55,7 @@ presentational only, still not graded (continuous-sentence grading is Phase 7).
 """
 import argparse
 import csv
+import functools
 import textwrap
 import threading
 import time
@@ -54,12 +65,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from aslcv.capture import CaptureBuffer
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
+from aslcv.features import hand_motion_energy
 from aslcv.generator.feedback import focus_parameter, readable_value
 from aslcv.generator.llm_feedback import coach_text_maybe_llm
 from aslcv.generator.sentence_prompts import sentence_prompt_maybe_llm
+from aslcv.generator.sign_description import describe_sign
 from aslcv.grading.embedding_grader import EmbeddingGrader
 from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 from aslcv.learner.mastery import MasteryState
@@ -78,13 +92,72 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 # --target/--targets override it (see resolve_targets).
 DEFAULT_TARGETS = ["mother", "father", "you", "me", "water", "thank_you", "yes", "good"]
 
-DISCLAIMER = ("PRACTICE AID ONLY -- confirms plumbing + match to a real reference clip. "
-              "Does NOT independently verify ASL correctness.")
+DISCLAIMER = ("PRACTICE AID -- confirms plumbing + match to a real reference clip, "
+              "does NOT independently verify ASL correctness. The model itself is imperfect "
+              "(see --help): a wrong verdict is often the model, not you.")
 
 PARAM_LABEL = {
-    "handshape": "HANDSHAPE", "major_location": "MAJOR LOC", "minor_location": "MINOR LOC",
-    "movement": "MOVEMENT", "repeated_movement": "REPEATED",
+    "handshape": "Handshape", "major_location": "Major location", "minor_location": "Minor location",
+    "movement": "Movement", "repeated_movement": "Repeated",
 }
+
+# ---------------------------------------------------------------------- theme ----
+# One consistent palette/type scale for every drawn panel, instead of each function
+# picking its own colors/sizes -- BGR (cv2 convention), a soft charcoal rather than
+# pure black so long viewing is easier on the eyes.
+BG = (28, 26, 24)
+BG_HEADER = (20, 19, 17)
+DIVIDER = (54, 51, 47)
+ACCENT = (86, 191, 245)          # amber-gold header/title accent
+TEXT_PRIMARY = (232, 232, 232)
+TEXT_SECONDARY = (168, 168, 168)
+TEXT_MUTED = (110, 110, 110)
+MATCH_COLOR = (130, 217, 116)
+OFF_COLOR = (96, 96, 234)
+INSUFFICIENT_COLOR = (150, 150, 150)
+SENTENCE_COLOR = (233, 197, 140)
+GLOSS_COLOR = (150, 224, 150)
+COACH_COLOR = (150, 197, 240)
+READY_COLOR = (140, 140, 140)
+CAPTURING_COLOR = (76, 195, 240)
+CAPTURED_COLOR = (130, 217, 116)
+
+F_TITLE, F_HEADER, F_BODY, F_SMALL, F_TINY = 0.72, 0.58, 0.5, 0.44, 0.4
+
+
+def _text(canvas, s, x, y, scale, color, thickness=1):
+    cv2.putText(canvas, s, (x, y), FONT, scale, color, thickness, cv2.LINE_AA)
+
+
+def _panel_bg(canvas, y0, y1, color=BG_HEADER, alpha=0.78):
+    band = canvas.copy()
+    cv2.rectangle(band, (0, y0), (canvas.shape[1], y1), color, -1)
+    cv2.addWeighted(band, alpha, canvas, 1 - alpha, 0, canvas)
+
+
+def _divider(canvas, y):
+    cv2.line(canvas, (0, y), (canvas.shape[1], y), DIVIDER, 1, cv2.LINE_AA)
+
+
+def _wrap_width(canvas, x, scale):
+    """Character budget for HERSHEY_SIMPLEX at `scale`, given the available
+    width from `x` to the canvas edge. cv2.putText does not wrap OR clip --
+    an overlong line just silently runs off the canvas -- so this constant
+    (~14px/char at scale=1, measured empirically via cv2.getTextSize; do not
+    guess this number) has to be a real upper bound, not an estimate."""
+    return max(10, int((canvas.shape[1] - x - 10) / (14.2 * scale)))
+
+
+def _wrapped(canvas, lines_and_colors, x, y_top, scale, line_h):
+    """Draws (text, color) pairs, wrapping each text to the canvas width at
+    `scale`, returning the y just past the last drawn line."""
+    max_chars = _wrap_width(canvas, x, scale)
+    y = y_top
+    for text, color in lines_and_colors:
+        for line in (textwrap.wrap(text, width=max_chars) or [""]):
+            _text(canvas, line, x, y, scale, color)
+            y += line_h
+    return y
 
 
 # ------------------------------------------------------------- manifest / clips ----
@@ -208,119 +281,151 @@ def verify_pipeline_matches_checkpoint(args, grader, skeleton):
 
 def _tag_and_color(verdict):
     if verdict.correct is True:
-        return "MATCH", (80, 255, 120)
+        return "MATCH", MATCH_COLOR
     if verdict.correct is False:
-        return "OFF", (60, 60, 255)
-    return "insufficient data", (170, 170, 170)
+        return "OFF", OFF_COLOR
+    return "insufficient data", INSUFFICIENT_COLOR
 
 
-def draw_verdict(canvas, result, target_sign, stale, n_win, win_cap, fps, grade_ms, mastery=None):
+_CAPTURE_STATE_DISPLAY = {
+    "idle": ("READY", READY_COLOR, "position yourself, then start signing"),
+    "active": ("CAPTURING...", CAPTURING_COLOR, "keep signing -- pause briefly when done"),
+    "settled": ("CAPTURED", CAPTURED_COLOR, "attempt complete -- [n] to record, [c] to retry"),
+}
+
+
+def draw_verdict(canvas, result, target_sign, stale, capture_state, fps, grade_ms, mastery=None):
+    """Draws the target header, capture-state badge, and (if `result`) the
+    fidelity + per-parameter verdict list. Returns the y just past the last
+    thing drawn, so compose_canvas can place the coach-text band adaptively
+    instead of guessing a fixed offset -- the verdict list's height varies
+    (2 lines per parameter, only when OFF/MATCH differ in content)."""
     h, w = canvas.shape[:2]
-    band = canvas.copy()
-    cv2.rectangle(band, (0, 0), (w, 230), (0, 0, 0), -1)
-    cv2.addWeighted(band, 0.6, canvas, 0.4, 0, canvas)
-
-    title = f"TARGET: {target_sign}"
+    _panel_bg(canvas, 0, 40)
+    title = f"TARGET  {target_sign}"
     if mastery is not None:
-        title += f"   mastery {mastery.sign_mastery(target_sign):.0%}"
-    cv2.putText(canvas, title, (14, 26), FONT, 0.8, (255, 220, 120), 2)
+        title += f"    mastery {mastery.sign_mastery(target_sign):.0%}"
+    _text(canvas, title, 16, 27, F_HEADER, ACCENT, 2)
+    _divider(canvas, 40)
 
+    label, color, hint = _CAPTURE_STATE_DISPLAY[capture_state]
+    cv2.circle(canvas, (24, 62), 6, color, -1, cv2.LINE_AA)
+    _text(canvas, label, 40, 67, F_BODY, color, 1)
+    _text(canvas, hint, 40, 87, F_TINY, TEXT_MUTED)
+    _divider(canvas, 100)
+
+    y = 130
     if result is None:
-        msg = "no verdict yet -- previous attempt cleared" if stale else "collecting frames..."
-        cv2.putText(canvas, msg, (14, 54), FONT, 0.65, (60, 200, 255), 2)
+        pass  # capture-state line above already says everything there is to say
     else:
-        fid_color = (140, 140, 140) if stale else (210, 210, 210)
-        suffix = "  (PREVIOUS ATTEMPT -- re-signing)" if stale else ""
-        cv2.putText(canvas, f"fidelity {result.fidelity:.3f}{suffix}", (14, 54), FONT, 0.6, fid_color, 1)
-        y = 80
+        fid_color = TEXT_MUTED if stale else TEXT_PRIMARY
+        suffix = "  (previous attempt -- re-signing)" if stale else ""
+        _text(canvas, f"fidelity {result.fidelity:.3f}{suffix}", 16, y, F_BODY, fid_color)
+        y += 32
         for p in ALL_PARAMETERS:
             v = result.parameters[p]
             tag, color = _tag_and_color(v)
             if stale:
                 color = tuple(c // 2 for c in color)
             predicted = readable_value(p, v.predicted)
+            cv2.circle(canvas, (22, y - 5), 4, color, -1, cv2.LINE_AA)
+            _text(canvas, f"{PARAM_LABEL[p]}", 36, y, F_BODY, TEXT_PRIMARY if not stale else TEXT_MUTED)
+            tag_text = f"{tag}  {v.confidence:.0%}"
+            (tag_w, _), _ = cv2.getTextSize(tag_text, FONT, F_SMALL, 1)
+            _text(canvas, tag_text, w - 16 - tag_w, y, F_SMALL, color)
+            y += 24
             if v.correct is False:
-                # OFF: show what was actually signed vs. the target's true
-                # grounded value (ASL-LEX/curriculum), not just a bare tag --
-                # this is what makes the verdict actionable, not just a score.
-                target = readable_value(p, v.target)
-                line = f"{PARAM_LABEL[p]:<10} you:{predicted:<9} want:{target:<9} [{tag}] {v.confidence:.0%}"
+                detail = f"you: {predicted}   target: {readable_value(p, v.target)}"
             else:
-                line = f"{PARAM_LABEL[p]:<10} {predicted:<12} [{tag}] {v.confidence:.0%}"
-            cv2.putText(canvas, line, (14, y), FONT, 0.5, color, 1)
+                detail = f"signed: {predicted}"
+            _text(canvas, detail, 36, y, F_TINY, color)
             y += 26
 
-    status = f"window {n_win}/{win_cap}  {fps:.0f} fps  grade {grade_ms:.0f} ms  [q]uit [c]lear [n]ext (adaptive)"
-    cv2.putText(canvas, status, (14, h - 36), FONT, 0.5, (220, 220, 220), 1)
-    cv2.putText(canvas, DISCLAIMER, (14, h - 12), FONT, 0.45, (0, 165, 255), 1)
+    content_bottom = y
+
+    disclaimer_lines = textwrap.wrap(DISCLAIMER, width=_wrap_width(canvas, 16, F_TINY))
+    band_top = h - 40 - 14 * len(disclaimer_lines)
+    _divider(canvas, band_top - 6)
+    status = f"{fps:.0f} fps   grade {grade_ms:.0f} ms   [q]uit  [c]lear  [n]ext"
+    _text(canvas, status, 16, band_top + 12, F_TINY, TEXT_SECONDARY)
+    for i, line in enumerate(disclaimer_lines):
+        _text(canvas, line, 16, band_top + 30 + i * 14, F_TINY, TEXT_MUTED)
+
+    return content_bottom, band_top
 
 
-def draw_sentence_prompt(canvas, seq, y_top):
-    """Draws seq's English sentence + gloss line onto `canvas` below y_top,
-    word-wrapped to the canvas width -- a quick-glance version; the console
-    print at the switch_target call site carries the full render() (gloss +
-    NMM tag spans) for anyone reading the terminal instead. No-op if seq is
-    None (disabled / no token / every LLM attempt refused by the rule
-    engine) -- never draws a placeholder implying a prompt exists."""
-    if seq is None:
-        return
-    max_chars = max(20, canvas.shape[1] // 11)
-    english_lines = textwrap.wrap(f'"{seq.english}"', width=max_chars) or [""]
-    gloss_line = " ".join(g.text for g in seq.glosses)
-    gloss_lines = textwrap.wrap(gloss_line, width=max_chars) or [""]
-    all_lines = ([(t, (160, 225, 255)) for t in english_lines]
-                 + [(t, (140, 255, 190)) for t in gloss_lines])
+def draw_reference_footer(canvas, target_sign, phon_labels, sentence_prompt, y_top):
+    """Bottom-of-reference-video panel: the ALWAYS-ON grounded description of
+    what the target sign's phonology actually is (sign_description.describe_sign
+    -- no LLM, no network, works even with --sentence-prompts off), plus the
+    optional LLM sentence-prompt example above it when available."""
+    h, w = canvas.shape[:2]
+    y = y_top
+    if sentence_prompt is not None:
+        lines = ([(f'"{sentence_prompt.english}"', SENTENCE_COLOR)]
+                 + [(" ".join(g.text for g in sentence_prompt.glosses), GLOSS_COLOR)])
+        wrap_width = _wrap_width(canvas, 12, F_SMALL)
+        band_h = 10 + 18 * sum(len(textwrap.wrap(t, width=wrap_width) or [""]) for t, _ in lines)
+        _panel_bg(canvas, y, y + band_h)
+        y = _wrapped(canvas, lines, 12, y + 20, F_SMALL, 18) + 6
+        _divider(canvas, y)
+        y += 8
 
-    band_h = 8 + 18 * len(all_lines)
-    band = canvas.copy()
-    cv2.rectangle(band, (0, y_top), (canvas.shape[1], y_top + band_h), (0, 0, 0), -1)
-    cv2.addWeighted(band, 0.6, canvas, 0.4, 0, canvas)
-    y = y_top + 16
-    for text, color in all_lines:
-        cv2.putText(canvas, text, (10, y), FONT, 0.42, color, 1)
-        y += 18
+    description = describe_sign(phon_labels, target_sign)
+    parts = description.split("  |  ")
+    wrap_width = _wrap_width(canvas, 12, F_SMALL)
+    band_h = 38 + 18 * sum(len(textwrap.wrap(t, width=wrap_width) or [""]) for t in parts)
+    band_h = min(band_h, h - y)
+    _panel_bg(canvas, y, y + band_h, color=BG_HEADER, alpha=0.85)
+    _text(canvas, "WHAT THE CORRECT SIGN LOOKS LIKE", 12, y + 18, F_TINY, TEXT_MUTED)
+    _wrapped(canvas, [(p, TEXT_PRIMARY) for p in parts], 12, y + 38, F_SMALL, 18)
 
 
 def draw_coach_text(canvas, text, sign, y_top):
     """Draws the coaching line from the attempt just recorded on the
     PREVIOUS [n] press (templated coach_text, or an LLM phrasing of the same
-    facts under --llm-feedback) below the verdict band. Labeled with which
-    sign it was about, since the target has usually already moved on by the
-    time this draws (mirrors the same "show what changed" spirit as the
-    dimmed stale verdict). No-op if there's no coaching text yet -- a fresh
-    session, or before the first attempt has been submitted with [n]."""
+    facts under --llm-feedback). Labeled with which sign it was about, since
+    the target has usually already moved on by the time this draws (mirrors
+    the same "show what changed" spirit as the dimmed stale verdict). No-op
+    if there's no coaching text yet -- a fresh session, or before the first
+    attempt has been submitted with [n]."""
     if text is None:
         return
-    max_chars = max(20, canvas.shape[1] // 11)
-    lines = textwrap.wrap(f"coach ({sign}): {text}", width=max_chars) or [""]
-    band_h = 8 + 18 * len(lines)
-    band = canvas.copy()
-    cv2.rectangle(band, (0, y_top), (canvas.shape[1], y_top + band_h), (0, 0, 0), -1)
-    cv2.addWeighted(band, 0.6, canvas, 0.4, 0, canvas)
-    y = y_top + 16
-    for line in lines:
-        cv2.putText(canvas, line, (14, y), FONT, 0.42, (255, 210, 140), 1)
-        y += 18
+    wrap_width = _wrap_width(canvas, 16, F_SMALL)
+    lines = textwrap.wrap(f"Coach ({sign}): {text}", width=wrap_width) or [""]
+    band_h = 14 + 18 * len(lines)
+    _panel_bg(canvas, y_top, y_top + band_h, alpha=0.85)
+    _wrapped(canvas, [(l, COACH_COLOR) for l in lines], 16, y_top + 20, F_SMALL, 18)
 
 
-def compose_canvas(ref_frame, live_frame, target_sign, result, stale, n_win, win_cap, fps, ms,
-                    mastery=None, sentence_prompt=None, coach_text=None, coach_text_for=None,
-                    height=480):
-    def fit(frame, fallback_w=360):
+def compose_canvas(ref_frame, live_frame, target_sign, phon_labels, result, stale, capture_state,
+                    fps, ms, mastery=None, sentence_prompt=None, coach_text=None, coach_text_for=None,
+                    height=560):
+    def fit(frame, fallback_w=380):
         if frame is None:
-            return np.zeros((height, fallback_w, 3), np.uint8)
+            return np.full((height, fallback_w, 3), 18, np.uint8)
         h, w = frame.shape[:2]
         scale = height / h
         return cv2.resize(frame, (max(1, int(w * scale)), height))
 
     left = fit(ref_frame)
     right = fit(live_frame)
-    cv2.rectangle(left, (0, 0), (left.shape[1], 34), (0, 0, 0), -1)
-    cv2.putText(left, f"REFERENCE: {target_sign}", (10, 24), FONT, 0.65, (255, 255, 255), 2)
-    draw_sentence_prompt(left, sentence_prompt, y_top=34)
-    draw_verdict(right, result, target_sign, stale, n_win, win_cap, fps, ms, mastery=mastery)
-    draw_coach_text(right, coach_text, coach_text_for, y_top=240)
-    return np.hstack([left, right])
+
+    _panel_bg(left, 0, 40)
+    _text(left, f"REFERENCE  {target_sign}", 16, 27, F_HEADER, ACCENT, 2)
+    _divider(left, 40)
+    footer_top = max(240, left.shape[0] - 190)
+    draw_reference_footer(left, target_sign, phon_labels, sentence_prompt, footer_top)
+
+    content_bottom, band_top = draw_verdict(right, result, target_sign, stale, capture_state,
+                                             fps, ms, mastery=mastery)
+    if coach_text is not None:
+        coach_y = min(content_bottom + 14, band_top - 40)
+        draw_coach_text(right, coach_text, coach_text_for, y_top=coach_y)
+
+    divider_canvas = np.hstack([left, right])
+    cv2.line(divider_canvas, (left.shape[1], 0), (left.shape[1], height), DIVIDER, 2, cv2.LINE_AA)
+    return divider_canvas
 
 
 # ------------------------------------------------------------------------ live ----
@@ -357,6 +462,7 @@ def run_live(args):
         state["sentence_prompt"] = None
         print(f"target -> {sign}  (mastery {mastery.sign_mastery(sign):.0%}, "
               f"reference clip: {row['video_id']}, {len(frames)} frames)")
+        print(f"  {describe_sign(phon_labels, sign)}")
         if args.sentence_prompts:
             # Blocking (same tradeoff already accepted for --llm-feedback):
             # this is an opt-in flag on a dev-machine demo script, not a
@@ -369,7 +475,13 @@ def run_live(args):
 
     switch_target(pool_signs[0])
 
-    window = deque(maxlen=args.window)
+    # Motion-aware capture (aslcv.capture.CaptureBuffer) replaces a fixed sliding
+    # window: it grows from the start of motion to a natural rest boundary instead
+    # of silently truncating a slow signer's attempt -- see module docstring.
+    energy_fn = functools.partial(hand_motion_energy, grader.pipeline.normalizer, skeleton)
+    capture = CaptureBuffer(energy_fn, motion_threshold=grader.pipeline.motion_threshold,
+                             settle_frames=args.settle_frames, preroll=args.preroll,
+                             max_frames=args.capture_max)
     win_lock = threading.Lock()
     shared = {"result": None, "ms": 0.0, "stale": False}
     res_lock = threading.Lock()
@@ -378,8 +490,9 @@ def run_live(args):
     def grade_loop():
         while not stop.is_set():
             with win_lock:
-                snap = list(window)
-            if len(snap) < args.min_frames:
+                snap = list(capture.frames)
+                capture_state = capture.state
+            if capture_state == "idle" or len(snap) < args.min_frames:
                 time.sleep(0.03)
                 continue
             with res_lock:
@@ -411,7 +524,7 @@ def run_live(args):
         extractor.close()
         raise SystemExit(f"cannot open camera {args.camera}")
 
-    print("controls: [q]/ESC quit   [c] clear window (keeps last verdict)   "
+    print("controls: [q]/ESC quit   [c] clear capture (keeps last verdict)   "
           "[n] record + adaptively pick next target")
     fps_t, fps_n, fps = time.time(), 0, 0.0
     try:
@@ -421,7 +534,8 @@ def run_live(args):
                 break
             pose = extractor.extract(frame)  # RAW frame, mirrored=False -> matches refs (issue #6)
             with win_lock:
-                window.append(pose if pose is not None else zero_pose())
+                capture.append(pose if pose is not None else zero_pose())
+                capture_state = capture.state
 
             live_canvas = extractor.draw(frame, pose) if pose is not None else frame.copy()
             if args.mirror:
@@ -431,21 +545,19 @@ def run_live(args):
 
             with res_lock:
                 result, ms, stale = shared["result"], shared["ms"], shared["stale"]
-            with win_lock:
-                n_win = len(window)
 
-            canvas = compose_canvas(ref_frame, live_canvas, state["target"], result, stale,
-                                     n_win, args.window, fps, ms, mastery=mastery,
+            canvas = compose_canvas(ref_frame, live_canvas, state["target"], phon_labels, result, stale,
+                                     capture_state, fps, ms, mastery=mastery,
                                      sentence_prompt=state["sentence_prompt"],
                                      coach_text=state["coach_text"], coach_text_for=state["coach_text_for"])
-            cv2.imshow("Phase 4 diagnose demo", canvas)
+            cv2.imshow("ASL diagnose demo", canvas)
 
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
             if key == ord("c"):
                 with win_lock:
-                    window.clear()
+                    capture.reset()
                 with res_lock:
                     shared["stale"] = True  # last verdict stays visible, just marked stale
             if key == ord("n"):
@@ -471,7 +583,7 @@ def run_live(args):
                           f"{state['target']} only in {wrong_parameter})")
                 switch_target(next_sign)
                 with win_lock:
-                    window.clear()
+                    capture.reset()
                 with res_lock:
                     shared["result"] = None
                     shared["stale"] = False
@@ -491,9 +603,11 @@ def run_live(args):
 # --------------------------------------------------------------------- selftest ----
 
 def run_selftest(args):
-    """No camera: push cached val clips' frames through the SAME window ->
-    grade_against_poses -> verdict path the live loop uses, so the wiring (and the
-    headline mother/father head-independence behavior) is verifiable offline."""
+    """No camera: push cached val clips' frames through the SAME grade_against_poses
+    -> verdict path the live loop uses, so the wiring (and the headline mother/father
+    head-independence behavior) is verifiable offline. Uses a plain trailing window
+    (args.window) over the already-complete cached clip -- CaptureBuffer's motion
+    state machine is a live-capture concern, exercised only by the real camera path."""
     grader = EmbeddingGrader.build(args.checkpoint, which=args.which)
     args.extractor = args.extractor or grader.extractor
     skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
@@ -520,7 +634,7 @@ def run_selftest(args):
               f"fidelity={result.fidelity:.3f}  {' '.join(parts)}")
 
     print(f"\nselftest: prompt -> grade_against_poses -> verdict path, no camera "
-          f"(sliding window = last {args.window} frames)\n")
+          f"(trailing window = last {args.window} frames)\n")
 
     print("self-check (attempt graded against its OWN true sign):")
     for sign in ("mother", "father", "you", "me", "water", "thank_you"):
@@ -551,8 +665,16 @@ def main():
     ap.add_argument("--target", default=None, help="starting target sign; [n] still cycles onward from here")
     ap.add_argument("--targets", default=None, help="comma-separated cycle list (default: a curated set incl. mother/father)")
     ap.add_argument("--camera", type=int, default=0, help="cv2 VideoCapture index")
-    ap.add_argument("--window", type=int, default=60, help="sliding window length (frames)")
-    ap.add_argument("--min-frames", type=int, default=20, help="frames needed before grading")
+    ap.add_argument("--window", type=int, default=60,
+                    help="--selftest only: trailing-window length (frames) over a cached clip; "
+                         "the live path uses --settle-frames/--preroll/--capture-max instead")
+    ap.add_argument("--min-frames", type=int, default=20, help="frames needed before grading starts")
+    ap.add_argument("--settle-frames", type=int, default=8,
+                    help="live capture: consecutive low-motion frames that mark an attempt CAPTURED")
+    ap.add_argument("--preroll", type=int, default=12,
+                    help="live capture: rest frames kept before motion starts (natural clip lead-in)")
+    ap.add_argument("--capture-max", type=int, default=150,
+                    help="live capture: safety cap (frames) so a stuck/very slow attempt can't grow forever")
     ap.add_argument("--mirror", dest="mirror", action="store_true", default=True,
                     help="selfie-mirror the DISPLAY only (default on; grading uses the raw frame)")
     ap.add_argument("--no-mirror", dest="mirror", action="store_false")

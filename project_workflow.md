@@ -1214,6 +1214,43 @@ session.
   data + mocked network, no real torch/checkpoint/token/network needed for
   any of them), full suite **263 passed / 10 skipped** (up from 214/10 before
   Phase 6).
+- **Live-demo hardening (accuracy + grounded description + UI) — DONE.**
+  Investigated a user report that handshape/repeated verdicts are "often
+  wrong" rather than patching blind. Partly a real, already-measured model
+  ceiling (handshape 80.7% / repeated_movement 82.1% val accuracy,
+  `PHASE4_REPORT.md`; `repeated` independently flagged the hardest parameter
+  across every backend in `eval_minimal_pairs.py`) — now said outright in the
+  on-screen disclaimer. But also a real, fixable live-only bug: the demo used
+  a fixed `deque(maxlen=60)` trailing window, which silently evicts its
+  OLDEST frames as new ones arrive, truncating a slow signer's attempt —
+  exactly the corruption that would hit `repeated_movement` hardest (needs
+  the full cyclic pattern) and can catch `handshape` mid-transition. Fixed
+  with `src/aslcv/capture.py`'s `CaptureBuffer`: an idle -> active -> settled
+  state machine using the SAME `hand_motion_energy` signal `features.py`'s
+  `trim_to_motion` already uses for cached clips (that function's own
+  docstring names this exact live use case, previously unbuilt) — grows from
+  the start of motion to a natural rest boundary instead of a fixed size,
+  capped for safety. READY/CAPTURING/CAPTURED shown on screen. `energy_fn` is
+  injected so the state machine is unit-tested with a synthetic deterministic
+  signal, no camera/pose fixtures needed (7 tests).
+
+  `src/aslcv/generator/sign_description.py`'s `describe_sign` is a NEW
+  always-on (no LLM, no network) grounded description of the TARGET sign's
+  own phonology, shown at the bottom of the reference-video panel per
+  explicit request ("describe what the correct sign looks like") — built
+  entirely from `PhonologyLabels`/`phonology.csv`, the same source every
+  verdict's `.target` already comes from (5 tests).
+
+  The whole overlay was redesigned for a cleaner look: one consistent
+  color/type-scale theme, a colored capture-state badge, and per-parameter
+  rows split into a label+tag line and a "you:/target:" detail line (fixes a
+  real overflow bug the old fixed-x-offset layout had). Caught along the way:
+  the wrap-width helper's original 9.5px/char constant was ~40% too
+  optimistic vs. real `cv2.getTextSize` measurements, silently running text
+  off the canvas edge (cv2.putText neither wraps nor clips) — found by
+  rendering mock canvases and visually inspecting them, not by reasoning
+  about it; recalibrated to ~14.2px/char, measured. Full suite: **296 passed
+  / 10 skipped.**
 - **Produces:** a working adaptive tutor for isolated signs (v1) — not yet
   packaged as `app/` (still a script), not yet difficulty-aware, not yet
   spaced-repetition-scheduled in the interval-algorithm sense. Both are
@@ -1341,6 +1378,11 @@ work, all unstarted:**
                         #   legs/feet dropped by default via Skeleton.region(); velocity zeroes
                         #   deltas across presence gaps; trim_to_motion + depth_proxies toggles;
                         #   hand_motion_energy() shared with the future live segmenter
+      capture.py       # DONE — CaptureBuffer: live idle/active/settled boundary
+                        #   detection (energy_fn-injected, unit-tested without a
+                        #   camera) so diagnose_demo.py grows the capture from
+                        #   motion-start to a natural rest boundary instead of
+                        #   truncating a slow signer with a fixed trailing window
       normalizer/      # DONE — ShoulderNormalizer (global + local-hand); BBox skipped as unsound
       pipeline_config.py # DONE — add_pipeline_args/build_pipeline: every script builds the
                         #   feature pipeline identically + prints the resolved config each run
@@ -1401,6 +1443,9 @@ work, all unstarted:**
                         #   containing the target word; Phase 5b's fail-closed
                         #   gloss_rules.gloss_sentence() -- not the LLM -- is
                         #   what decides whether it's ever displayed
+        sign_description.py # describe_sign: ALWAYS-ON (no LLM) grounded
+                        #   description of a target sign's own phonology, from
+                        #   PhonologyLabels/phonology.csv directly
     scripts/           # DONE — extract_landmarks.py (extract, records provenance),
                        #   verify_cache.py (integrity + provenance/staleness), render_clip.py
                        #   (draw cached poses back onto video for eyeballing), eval_slice.py
