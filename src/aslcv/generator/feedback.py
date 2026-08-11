@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import re
 
+from .handshape_descriptions import describe_handshape
+
 # ASL-LEX phonology codes come in two raw shapes: snake_case ('closed_b',
 # 'flatspread_5') and PascalCase ('HeadAway', 'TorsoTop'). Both are spaced
 # into words and re-cased below -- pure formatting of the existing grounded
@@ -84,6 +86,16 @@ def coach_text(parameters) -> str:
     target = readable_value(focus.parameter, focus.target)
     msg = (f"Focus on your {PARAM_NAME[focus.parameter]}: you signed "
            f"'{signed}', the target is '{target}' -- {PARAM_TIP[focus.parameter]}.")
+    if focus.parameter == "handshape":
+        # Grounded descriptions (see handshape_descriptions.py) exist for
+        # only some codes -- append whichever side(s) have one, silently
+        # skip the rest rather than show a false-precision guess.
+        signed_detail = describe_handshape(focus.predicted)
+        target_detail = describe_handshape(focus.target)
+        if signed_detail:
+            msg += f" You made: {signed_detail}."
+        if target_detail:
+            msg += f" Target is: {target_detail}."
     others = [v.parameter for v in wrong if v is not focus]
     if others:
         msg += " Also off: " + ", ".join(PARAM_NAME[p] for p in others) + "."

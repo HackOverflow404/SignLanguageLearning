@@ -30,13 +30,44 @@ def test_facts_all_correct():
 
 
 def test_facts_records_wrong_with_readable_name_and_grounded_values():
+    # 'c' is Curved-flexion -- no locally sourced handshape description, so
+    # this stays a clean check of just name/you_signed/should_be, no extra
+    # detail keys (those are covered by their own test below)
     parameters = {
-        "handshape": verdict("handshape", False, predicted="1", target="5"),
+        "handshape": verdict("handshape", False, predicted="c", target="c"),
         "movement": verdict("movement", True),
     }
     facts = _facts("mother", parameters)
-    assert facts["wrong"] == [{"name": "handshape", "you_signed": "1", "should_be": "5"}]
+    assert facts["wrong"] == [{"name": "handshape", "you_signed": "C", "should_be": "C"}]
     assert facts["correct"] == ["movement path"] or facts["correct"] == ["movement"]  # PARAM_NAME value
+
+
+def test_facts_adds_grounded_handshape_detail_when_available():
+    parameters = {"handshape": verdict("handshape", False, predicted="closed_b", target="open_b")}
+    facts = _facts("mother", parameters)
+    entry = facts["wrong"][0]
+    assert "tucked in" in entry["you_signed_detail"]
+    assert "out to the side" in entry["should_be_detail"]
+
+
+def test_facts_omits_detail_keys_when_ungrounded():
+    parameters = {"handshape": verdict("handshape", False, predicted="c", target="c")}
+    facts = _facts("mother", parameters)
+    entry = facts["wrong"][0]
+    assert "you_signed_detail" not in entry and "should_be_detail" not in entry
+
+
+def test_facts_never_adds_detail_keys_for_non_handshape_parameters():
+    parameters = {"movement": verdict("movement", False, predicted="Straight", target="Circular")}
+    facts = _facts("mother", parameters)
+    entry = facts["wrong"][0]
+    assert "you_signed_detail" not in entry and "should_be_detail" not in entry
+
+
+def test_prompt_includes_handshape_detail_when_available():
+    facts = _facts("mother", {"handshape": verdict("handshape", False, predicted="closed_b", target="open_b")})
+    prompt = _prompt(facts)
+    assert "tucked in" in prompt and "out to the side" in prompt
 
 
 def test_facts_uses_readable_values_not_raw_asl_lex_codes():

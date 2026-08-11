@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from ._hf_client import DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT, resolve_token
 from .feedback import PARAM_NAME, coach_text, readable_value
+from .handshape_descriptions import describe_handshape
 
 _warned_no_token = False
 
@@ -44,18 +45,34 @@ def _facts(target_sign: str, parameters) -> dict:
     `EmbeddingGrader.grade_against`, never invented here or by the LLM this
     feeds into. Both go through `readable_value` first (formatting only --
     `closed_b` -> `Closed B` -- never a new claim), so the LLM is never asked
-    to phrase a raw jargon code like the learner would otherwise see."""
+    to phrase a raw jargon code like the learner would otherwise see. For
+    handshape specifically, `you_signed_detail`/`should_be_detail` add
+    `handshape_descriptions.describe_handshape`'s grounded plain-English
+    description when one exists for that code (only some codes have one --
+    see that module's docstring); omitted (not empty-stringed) when it
+    doesn't, so the prompt never implies a description exists when it was
+    actually just left out."""
     verdicts = list(parameters.values()) if hasattr(parameters, "values") else list(parameters)
     judged = [v for v in verdicts if v.correct is not None]
+    wrong = []
+    for v in judged:
+        if v.correct is not False:
+            continue
+        entry = {"name": PARAM_NAME[v.parameter],
+                  "you_signed": readable_value(v.parameter, v.predicted),
+                  "should_be": readable_value(v.parameter, v.target)}
+        if v.parameter == "handshape":
+            signed_detail = describe_handshape(v.predicted)
+            target_detail = describe_handshape(v.target)
+            if signed_detail:
+                entry["you_signed_detail"] = signed_detail
+            if target_detail:
+                entry["should_be_detail"] = target_detail
+        wrong.append(entry)
     return {
         "target_sign": target_sign,
         "all_correct": bool(judged) and all(v.correct for v in judged),
-        "wrong": [
-            {"name": PARAM_NAME[v.parameter],
-             "you_signed": readable_value(v.parameter, v.predicted),
-             "should_be": readable_value(v.parameter, v.target)}
-            for v in judged if v.correct is False
-        ],
+        "wrong": wrong,
         "correct": [PARAM_NAME[v.parameter] for v in judged if v.correct is True],
     }
 
@@ -66,10 +83,14 @@ def _prompt(facts: dict) -> str:
     elif facts["all_correct"]:
         body = f"Every diagnosed aspect matched the reference sign for '{facts['target_sign']}'."
     else:
-        wrong_lines = "; ".join(
-            f"{w['name']}: they signed '{w['you_signed']}', it should be '{w['should_be']}'"
-            for w in facts["wrong"]
-        )
+        def _wrong_line(w):
+            line = f"{w['name']}: they signed '{w['you_signed']}', it should be '{w['should_be']}'"
+            if "you_signed_detail" in w:
+                line += f" (what they signed looks like: {w['you_signed_detail']})"
+            if "should_be_detail" in w:
+                line += f" (the target looks like: {w['should_be_detail']})"
+            return line
+        wrong_lines = "; ".join(_wrong_line(w) for w in facts["wrong"])
         body = (
             f"Target sign: '{facts['target_sign']}'. "
             f"Matched: {', '.join(facts['correct']) or 'none'}. "
@@ -113,8 +134,9 @@ def llm_coach_text(target_sign: str, parameters, token: "str | None" = None,
         client = InferenceClient(model=model, provider=provider, token=token, timeout=timeout)
         response = client.chat_completion(
             messages=[{"role": "user", "content": _prompt(_facts(target_sign, parameters))}],
-            max_tokens=150,  # up from 100: naming multiple wrong parameters' you-signed/should-be
-                              # values (not just their names) needs more room before truncating
+            max_tokens=220,  # up from 100: naming multiple wrong parameters' you-signed/should-be
+                              # values, plus handshape's grounded sub-feature descriptions when
+                              # present, needs more room before truncating
         )
         text = response.choices[0].message.content.strip()
         return text or None

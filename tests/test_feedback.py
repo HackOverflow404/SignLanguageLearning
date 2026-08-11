@@ -86,6 +86,29 @@ def test_focus_message_uses_readable_not_raw_codes():
     assert "Closed B" in text and "Open B" in text
 
 
+def test_handshape_focus_appends_grounded_descriptions_for_both_sides():
+    parameters = {"handshape": verdict("handshape", False, confidence=0.9,
+                                        predicted="closed_b", target="open_b")}
+    text = coach_text(parameters)
+    assert "You made:" in text and "Target is:" in text
+    assert "tucked in" in text and "out to the side" in text
+
+
+def test_handshape_focus_omits_description_when_ungrounded():
+    # 'c' is Curved-flexion -- no locally sourced definition, so no
+    # "You made:"/"Target is:" detail should be appended at all
+    parameters = {"handshape": verdict("handshape", False, confidence=0.9,
+                                        predicted="c", target="c")}
+    text = coach_text(parameters)
+    assert "You made:" not in text and "Target is:" not in text
+
+
+def test_non_handshape_focus_never_gets_handshape_detail():
+    parameters = {"movement": verdict("movement", False, confidence=0.9)}
+    text = coach_text(parameters)
+    assert "You made:" not in text and "Target is:" not in text
+
+
 # ---- readable_value: formatting only, never a new claim about the code ----------
 
 def test_readable_value_snake_case_handshape():
