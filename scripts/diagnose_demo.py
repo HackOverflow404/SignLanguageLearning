@@ -104,32 +104,41 @@ PARAM_LABEL = {
 # ---------------------------------------------------------------------- theme ----
 # One consistent palette/type scale for every drawn panel, instead of each function
 # picking its own colors/sizes -- BGR (cv2 convention), a soft charcoal rather than
-# pure black so long viewing is easier on the eyes.
-BG = (28, 26, 24)
-BG_HEADER = (20, 19, 17)
-DIVIDER = (54, 51, 47)
-ACCENT = (86, 191, 245)          # amber-gold header/title accent
-TEXT_PRIMARY = (232, 232, 232)
-TEXT_SECONDARY = (168, 168, 168)
-TEXT_MUTED = (110, 110, 110)
-MATCH_COLOR = (130, 217, 116)
-OFF_COLOR = (96, 96, 234)
-INSUFFICIENT_COLOR = (150, 150, 150)
-SENTENCE_COLOR = (233, 197, 140)
-GLOSS_COLOR = (150, 224, 150)
-COACH_COLOR = (150, 197, 240)
-READY_COLOR = (140, 140, 140)
-CAPTURING_COLOR = (76, 195, 240)
-CAPTURED_COLOR = (130, 217, 116)
+# pure black so long viewing is easier on the eyes. Text that sits over the LIVE
+# camera feed always gets a near-opaque panel behind it first (see _panel_bg calls
+# below) -- colored text directly over a busy, brightly-lit camera image is close to
+# unreadable regardless of how saturated the color is.
+BG_HEADER = (22, 20, 18)
+BG_PANEL = (36, 33, 30)
+DIVIDER = (64, 60, 55)
+ACCENT = (50, 172, 250)           # warm amber-gold header/title accent
+TEXT_PRIMARY = (245, 245, 245)
+TEXT_SECONDARY = (195, 195, 195)
+TEXT_MUTED = (145, 145, 145)
+MATCH_COLOR = (70, 220, 90)        # saturated green
+OFF_COLOR = (60, 75, 255)          # saturated red
+INSUFFICIENT_COLOR = (190, 190, 190)
+SENTENCE_COLOR = (150, 205, 255)
+GLOSS_COLOR = (110, 220, 150)
+COACH_COLOR = (110, 190, 255)
+READY_COLOR = (165, 165, 165)
+CAPTURING_COLOR = (50, 190, 255)
+CAPTURED_COLOR = (70, 220, 90)
 
-F_TITLE, F_HEADER, F_BODY, F_SMALL, F_TINY = 0.72, 0.58, 0.5, 0.44, 0.4
+# Bumped up across the board -- the previous scale (0.4-0.72) was too small to read
+# comfortably at a normal viewing distance. Bold (thickness=2) is used for anything
+# that needs to pop against a busy background, not just a bigger scale.
+F_TITLE, F_HEADER, F_BODY, F_SMALL, F_TINY = 1.0, 0.8, 0.68, 0.58, 0.52
 
 
 def _text(canvas, s, x, y, scale, color, thickness=1):
     cv2.putText(canvas, s, (x, y), FONT, scale, color, thickness, cv2.LINE_AA)
 
 
-def _panel_bg(canvas, y0, y1, color=BG_HEADER, alpha=0.78):
+def _panel_bg(canvas, y0, y1, color=BG_PANEL, alpha=0.93):
+    y0, y1 = max(0, int(y0)), min(canvas.shape[0], int(y1))
+    if y1 <= y0:
+        return
     band = canvas.copy()
     cv2.rectangle(band, (0, y0), (canvas.shape[1], y1), color, -1)
     cv2.addWeighted(band, alpha, canvas, 1 - alpha, 0, canvas)
@@ -143,21 +152,26 @@ def _wrap_width(canvas, x, scale):
     """Character budget for HERSHEY_SIMPLEX at `scale`, given the available
     width from `x` to the canvas edge. cv2.putText does not wrap OR clip --
     an overlong line just silently runs off the canvas -- so this constant
-    (~14px/char at scale=1, measured empirically via cv2.getTextSize; do not
-    guess this number) has to be a real upper bound, not an estimate."""
+    (~14.2px/char at scale=1, measured empirically via cv2.getTextSize; do
+    not guess this number) has to be a real upper bound, not an estimate."""
     return max(10, int((canvas.shape[1] - x - 10) / (14.2 * scale)))
 
 
-def _wrapped(canvas, lines_and_colors, x, y_top, scale, line_h):
+def _wrapped(canvas, lines_and_colors, x, y_top, scale, line_h, thickness=1):
     """Draws (text, color) pairs, wrapping each text to the canvas width at
     `scale`, returning the y just past the last drawn line."""
     max_chars = _wrap_width(canvas, x, scale)
     y = y_top
     for text, color in lines_and_colors:
         for line in (textwrap.wrap(text, width=max_chars) or [""]):
-            _text(canvas, line, x, y, scale, color)
+            _text(canvas, line, x, y, scale, color, thickness)
             y += line_h
     return y
+
+
+def _wrapped_line_count(canvas, texts, x, scale):
+    max_chars = _wrap_width(canvas, x, scale)
+    return sum(len(textwrap.wrap(t, width=max_chars) or [""]) for t in texts)
 
 
 # ------------------------------------------------------------- manifest / clips ----
@@ -294,114 +308,148 @@ _CAPTURE_STATE_DISPLAY = {
 }
 
 
-def draw_verdict(canvas, result, target_sign, stale, capture_state, fps, grade_ms, mastery=None):
+HEADER_H = 58
+BADGE_H = 76
+ROW_H = 78  # per-parameter: label+tag line (34) + detail line (34) + gap (10)
+
+
+def draw_verdict(canvas, result, target_sign, stale, capture_state, mastery=None):
     """Draws the target header, capture-state badge, and (if `result`) the
-    fidelity + per-parameter verdict list. Returns the y just past the last
-    thing drawn, so compose_canvas can place the coach-text band adaptively
-    instead of guessing a fixed offset -- the verdict list's height varies
-    (2 lines per parameter, only when OFF/MATCH differ in content)."""
-    h, w = canvas.shape[:2]
-    _panel_bg(canvas, 0, 40)
-    title = f"TARGET  {target_sign}"
+    fidelity + per-parameter verdict list, each behind its own solid panel --
+    this all sits on top of the LIVE camera feed, and colored text directly
+    over a busy, brightly-lit image is close to unreadable no matter the
+    color, so nothing here is drawn without an opaque backing first. Returns
+    content_bottom -- everything below this point is drawn TOP-DOWN from
+    there by the caller (coach text, then the status bar), never at a fixed
+    offset from the canvas bottom, so a taller verdict block can never
+    silently overlap what comes after it (a real bug an earlier version of
+    this file had: fixed offsets from both ends of the canvas can overlap in
+    the middle if the content in between is taller than assumed)."""
+    w = canvas.shape[1]
+
+    _panel_bg(canvas, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
+    title = f"TARGET   {target_sign}"
     if mastery is not None:
-        title += f"    mastery {mastery.sign_mastery(target_sign):.0%}"
-    _text(canvas, title, 16, 27, F_HEADER, ACCENT, 2)
-    _divider(canvas, 40)
+        title += f"     mastery {mastery.sign_mastery(target_sign):.0%}"
+    _text(canvas, title, 18, 40, F_HEADER, ACCENT, 2)
+    _divider(canvas, HEADER_H)
 
+    badge_top = HEADER_H
+    _panel_bg(canvas, badge_top, badge_top + BADGE_H, color=BG_HEADER, alpha=0.93)
     label, color, hint = _CAPTURE_STATE_DISPLAY[capture_state]
-    cv2.circle(canvas, (24, 62), 6, color, -1, cv2.LINE_AA)
-    _text(canvas, label, 40, 67, F_BODY, color, 1)
-    _text(canvas, hint, 40, 87, F_TINY, TEXT_MUTED)
-    _divider(canvas, 100)
+    cv2.circle(canvas, (32, badge_top + 30), 9, color, -1, cv2.LINE_AA)
+    _text(canvas, label, 54, badge_top + 38, F_BODY, color, 2)
+    _text(canvas, hint, 54, badge_top + 62, F_TINY, TEXT_MUTED)
+    _divider(canvas, badge_top + BADGE_H)
 
-    y = 130
+    content_top = badge_top + BADGE_H
     if result is None:
-        pass  # capture-state line above already says everything there is to say
-    else:
-        fid_color = TEXT_MUTED if stale else TEXT_PRIMARY
-        suffix = "  (previous attempt -- re-signing)" if stale else ""
-        _text(canvas, f"fidelity {result.fidelity:.3f}{suffix}", 16, y, F_BODY, fid_color)
+        return content_top
+
+    content_h = 56 + ROW_H * len(ALL_PARAMETERS)
+    _panel_bg(canvas, content_top, content_top + content_h, color=BG_PANEL, alpha=0.94)
+
+    y = content_top + 44
+    fid_color = TEXT_MUTED if stale else TEXT_PRIMARY
+    suffix = "  (previous attempt -- re-signing)" if stale else ""
+    _text(canvas, f"Fidelity {result.fidelity:.3f}{suffix}", 20, y, F_BODY, fid_color, 2)
+    y += 48
+    for p in ALL_PARAMETERS:
+        v = result.parameters[p]
+        tag, color = _tag_and_color(v)
+        if stale:
+            color = tuple(c // 2 for c in color)
+        predicted = readable_value(p, v.predicted)
+        cv2.circle(canvas, (26, y - 8), 6, color, -1, cv2.LINE_AA)
+        _text(canvas, PARAM_LABEL[p], 46, y, F_BODY, TEXT_PRIMARY if not stale else TEXT_MUTED, 2)
+        tag_text = f"{tag}   {v.confidence:.0%}"
+        (tag_w, _), _ = cv2.getTextSize(tag_text, FONT, F_SMALL, 2)
+        _text(canvas, tag_text, w - 22 - tag_w, y, F_SMALL, color, 2)
         y += 32
-        for p in ALL_PARAMETERS:
-            v = result.parameters[p]
-            tag, color = _tag_and_color(v)
-            if stale:
-                color = tuple(c // 2 for c in color)
-            predicted = readable_value(p, v.predicted)
-            cv2.circle(canvas, (22, y - 5), 4, color, -1, cv2.LINE_AA)
-            _text(canvas, f"{PARAM_LABEL[p]}", 36, y, F_BODY, TEXT_PRIMARY if not stale else TEXT_MUTED)
-            tag_text = f"{tag}  {v.confidence:.0%}"
-            (tag_w, _), _ = cv2.getTextSize(tag_text, FONT, F_SMALL, 1)
-            _text(canvas, tag_text, w - 16 - tag_w, y, F_SMALL, color)
-            y += 24
-            if v.correct is False:
-                detail = f"you: {predicted}   target: {readable_value(p, v.target)}"
-            else:
-                detail = f"signed: {predicted}"
-            _text(canvas, detail, 36, y, F_TINY, color)
-            y += 26
+        if v.correct is False:
+            detail = f"you: {predicted}    target: {readable_value(p, v.target)}"
+        else:
+            detail = f"signed: {predicted}"
+        _text(canvas, detail, 46, y, F_SMALL, color, 1)
+        y += ROW_H - 32
+    return content_top + content_h
 
-    content_bottom = y
 
-    disclaimer_lines = textwrap.wrap(DISCLAIMER, width=_wrap_width(canvas, 16, F_TINY))
-    band_top = h - 40 - 14 * len(disclaimer_lines)
-    _divider(canvas, band_top - 6)
-    status = f"{fps:.0f} fps   grade {grade_ms:.0f} ms   [q]uit  [c]lear  [n]ext"
-    _text(canvas, status, 16, band_top + 12, F_TINY, TEXT_SECONDARY)
+def draw_status_bar(canvas, y_top, fps, grade_ms):
+    """Status/disclaimer bar, drawn starting exactly at `y_top` (wherever the
+    content above it actually ended) and extending to the canvas bottom --
+    never pinned to a fixed offset from the bottom, so it can't be squeezed
+    or overlapped if the content above it turned out taller than expected."""
+    h = canvas.shape[0]
+    disclaimer_lines = textwrap.wrap(DISCLAIMER, width=_wrap_width(canvas, 18, F_TINY))
+    _panel_bg(canvas, y_top, h, color=BG_HEADER, alpha=0.93)
+    _divider(canvas, y_top)
+    status = f"{fps:.0f} fps   grade {grade_ms:.0f} ms   [q]uit   [c]lear   [n]ext"
+    _text(canvas, status, 18, y_top + 28, F_TINY, TEXT_SECONDARY)
     for i, line in enumerate(disclaimer_lines):
-        _text(canvas, line, 16, band_top + 30 + i * 14, F_TINY, TEXT_MUTED)
-
-    return content_bottom, band_top
+        _text(canvas, line, 18, y_top + 28 + (i + 1) * 26, F_TINY, TEXT_MUTED)
 
 
-def draw_reference_footer(canvas, target_sign, phon_labels, sentence_prompt, y_top):
-    """Bottom-of-reference-video panel: the ALWAYS-ON grounded description of
-    what the target sign's phonology actually is (sign_description.describe_sign
-    -- no LLM, no network, works even with --sentence-prompts off), plus the
-    optional LLM sentence-prompt example above it when available."""
-    h, w = canvas.shape[:2]
-    y = y_top
-    if sentence_prompt is not None:
-        lines = ([(f'"{sentence_prompt.english}"', SENTENCE_COLOR)]
-                 + [(" ".join(g.text for g in sentence_prompt.glosses), GLOSS_COLOR)])
-        wrap_width = _wrap_width(canvas, 12, F_SMALL)
-        band_h = 10 + 18 * sum(len(textwrap.wrap(t, width=wrap_width) or [""]) for t, _ in lines)
-        _panel_bg(canvas, y, y + band_h)
-        y = _wrapped(canvas, lines, 12, y + 20, F_SMALL, 18) + 6
+def _reference_footer_height(canvas, description, sentence_lines):
+    """Pre-measures draw_reference_footer's content height WITHOUT drawing --
+    lets compose_canvas anchor the footer's top from the actual content size
+    instead of a guessed fixed offset (a guess too small would clip the
+    panel background while the text still drew past it, right back onto the
+    raw video -- the exact bug this whole redesign exists to fix)."""
+    desc_lines_n = _wrapped_line_count(canvas, [description], 18, F_SMALL)
+    band_h = 24 + 34 + desc_lines_n * 30
+    if sentence_lines:
+        sentence_lines_n = _wrapped_line_count(canvas, sentence_lines, 18, F_SMALL)
+        band_h += 10 + sentence_lines_n * 30 + 20
+    return band_h
+
+
+def draw_reference_footer(canvas, y_top, band_h, description, sentence_lines):
+    """Bottom-of-reference-video panel, drawn as ONE continuous solid card (no
+    gaps of raw video peeking through between sub-sections): the ALWAYS-ON
+    grounded, natural-language description of what the target sign's
+    phonology actually is (sign_description.describe_sign -- no LLM, no
+    network, works even with --sentence-prompts off), plus the optional LLM
+    sentence-prompt example above it when available."""
+    desc_line_h, heading_h = 30, 34
+    _panel_bg(canvas, y_top, y_top + band_h, color=BG_PANEL, alpha=0.94)
+
+    y = y_top + 18
+    if sentence_lines:
+        y = _wrapped(canvas, [(sentence_lines[0], SENTENCE_COLOR), (sentence_lines[1], GLOSS_COLOR)],
+                     18, y + desc_line_h - 10, F_SMALL, desc_line_h, thickness=2) + 4
         _divider(canvas, y)
-        y += 8
+        y += 18
 
-    description = describe_sign(phon_labels, target_sign)
-    parts = description.split("  |  ")
-    wrap_width = _wrap_width(canvas, 12, F_SMALL)
-    band_h = 38 + 18 * sum(len(textwrap.wrap(t, width=wrap_width) or [""]) for t in parts)
-    band_h = min(band_h, h - y)
-    _panel_bg(canvas, y, y + band_h, color=BG_HEADER, alpha=0.85)
-    _text(canvas, "WHAT THE CORRECT SIGN LOOKS LIKE", 12, y + 18, F_TINY, TEXT_MUTED)
-    _wrapped(canvas, [(p, TEXT_PRIMARY) for p in parts], 12, y + 38, F_SMALL, 18)
+    _text(canvas, "WHAT THE CORRECT SIGN LOOKS LIKE", 18, y + 6, F_TINY, TEXT_MUTED, 1)
+    _wrapped(canvas, [(description, TEXT_PRIMARY)], 18, y + heading_h, F_SMALL, desc_line_h, thickness=2)
 
 
 def draw_coach_text(canvas, text, sign, y_top):
     """Draws the coaching line from the attempt just recorded on the
     PREVIOUS [n] press (templated coach_text, or an LLM phrasing of the same
-    facts under --llm-feedback). Labeled with which sign it was about, since
-    the target has usually already moved on by the time this draws (mirrors
-    the same "show what changed" spirit as the dimmed stale verdict). No-op
-    if there's no coaching text yet -- a fresh session, or before the first
-    attempt has been submitted with [n]."""
+    facts under --llm-feedback), starting exactly at `y_top`. Labeled with
+    which sign it was about, since the target has usually already moved on
+    by the time this draws (mirrors the same "show what changed" spirit as
+    the dimmed stale verdict). Returns `y_top` unchanged if there's no
+    coaching text yet (a fresh session, or before the first attempt has been
+    submitted with [n]) -- never draws a band for nothing."""
     if text is None:
-        return
-    wrap_width = _wrap_width(canvas, 16, F_SMALL)
-    lines = textwrap.wrap(f"Coach ({sign}): {text}", width=wrap_width) or [""]
-    band_h = 14 + 18 * len(lines)
-    _panel_bg(canvas, y_top, y_top + band_h, alpha=0.85)
-    _wrapped(canvas, [(l, COACH_COLOR) for l in lines], 16, y_top + 20, F_SMALL, 18)
+        return y_top
+    full = f"Coach ({sign}): {text}"
+    lines_n = _wrapped_line_count(canvas, [full], 18, F_SMALL)
+    line_h = 30
+    band_h = 20 + 14 + lines_n * line_h
+    _panel_bg(canvas, y_top, y_top + band_h, color=BG_PANEL, alpha=0.94)
+    _wrapped(canvas, [(full, COACH_COLOR)], 18, y_top + 14 + line_h, F_SMALL, line_h, thickness=2)
+    _divider(canvas, y_top)
+    return y_top + band_h
 
 
 def compose_canvas(ref_frame, live_frame, target_sign, phon_labels, result, stale, capture_state,
                     fps, ms, mastery=None, sentence_prompt=None, coach_text=None, coach_text_for=None,
-                    height=560):
-    def fit(frame, fallback_w=380):
+                    height=920):
+    def fit(frame, fallback_w=460):
         if frame is None:
             return np.full((height, fallback_w, 3), 18, np.uint8)
         h, w = frame.shape[:2]
@@ -411,17 +459,27 @@ def compose_canvas(ref_frame, live_frame, target_sign, phon_labels, result, stal
     left = fit(ref_frame)
     right = fit(live_frame)
 
-    _panel_bg(left, 0, 40)
-    _text(left, f"REFERENCE  {target_sign}", 16, 27, F_HEADER, ACCENT, 2)
-    _divider(left, 40)
-    footer_top = max(240, left.shape[0] - 190)
-    draw_reference_footer(left, target_sign, phon_labels, sentence_prompt, footer_top)
+    _panel_bg(left, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
+    _text(left, f"REFERENCE   {target_sign}", 18, 40, F_HEADER, ACCENT, 2)
+    _divider(left, HEADER_H)
+    description = describe_sign(phon_labels, target_sign)
+    sentence_lines = []
+    if sentence_prompt is not None:
+        sentence_lines = [f'"{sentence_prompt.english}"',
+                           " ".join(g.text for g in sentence_prompt.glosses)]
+    footer_h = _reference_footer_height(left, description, sentence_lines)
+    footer_top = max(HEADER_H + 160, left.shape[0] - footer_h)
+    draw_reference_footer(left, footer_top, left.shape[0] - footer_top, description, sentence_lines)
 
-    content_bottom, band_top = draw_verdict(right, result, target_sign, stale, capture_state,
-                                             fps, ms, mastery=mastery)
-    if coach_text is not None:
-        coach_y = min(content_bottom + 14, band_top - 40)
-        draw_coach_text(right, coach_text, coach_text_for, y_top=coach_y)
+    # Top-down: verdict content, then coach text right after it, then the
+    # status bar right after THAT -- each section starts EXACTLY where the
+    # previous one ended (no gap: a gap here is raw, un-paneled video peeking
+    # through between two opaque sections, which is its own readability bug,
+    # not just a cosmetic one) and a taller-than-usual section can never
+    # overlap what comes after it (see draw_verdict's docstring).
+    content_bottom = draw_verdict(right, result, target_sign, stale, capture_state, mastery=mastery)
+    coach_bottom = draw_coach_text(right, coach_text, coach_text_for, y_top=content_bottom)
+    draw_status_bar(right, coach_bottom, fps, ms)
 
     divider_canvas = np.hstack([left, right])
     cv2.line(divider_canvas, (left.shape[1], 0), (left.shape[1], height), DIVIDER, 2, cv2.LINE_AA)

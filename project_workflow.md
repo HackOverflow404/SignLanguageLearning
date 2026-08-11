@@ -1251,6 +1251,35 @@ session.
   rendering mock canvases and visually inspecting them, not by reasoning
   about it; recalibrated to ~14.2px/char, measured. Full suite: **296 passed
   / 10 skipped.**
+- **UI polish pass 2 — DONE.** First redesign wasn't enough per user feedback:
+  bottom text still hard to read, red/green verdict text hard to read, fonts
+  too small, `sign_description` read like a labeled spec sheet not natural
+  language. Root cause of the readability complaint: the verdict list,
+  coach-text band, and status bar were drawn directly over the RAW live
+  camera feed with no background panel behind most of them. Fixed by giving
+  every text region its own near-opaque panel, bumping the type scale up
+  (0.4–0.72 → 0.52–1.0) with bold weight where it needs to pop, more
+  saturated MATCH/OFF colors, and rewriting `describe_sign` into two flowing
+  sentences (with proper a/an agreement and natural "Away" phrasing) instead
+  of `"Label: value"` fragments. Two more real layout bugs found by rendering
+  mock canvases against synthetic noise and inspecting the PNGs (same method
+  as before, not reasoning about pixel math): (1) the coach-text band was
+  positioned via clamping against two independently-guessed anchors, which
+  could overlap the verdict list when content ran longer than assumed —
+  fixed by making `draw_verdict` return the exact y it stopped at and having
+  every section below it start exactly there, top-down, structurally
+  incapable of overlapping; (2) deliberate small gaps between adjacent
+  opaque panels let raw video show through in a visible stripe at each seam
+  — panels now touch edge-to-edge with a divider line instead. Canvas height
+  raised 640→920 to fit the larger text without re-triggering the overlap
+  bug at the margin. Full suite: **299 passed / 10 skipped.**
+
+  Separately noticed, not yet fixed: `Qwen/Qwen2.5-7B-Instruct` (the
+  `--llm-feedback`/`--sentence-prompts` default model) started failing live
+  HF calls with `model_not_supported` during this session — an HF Inference
+  Providers routing change, not a bug here. Both features fail open
+  correctly, so nothing breaks, but the LLM upgrade is non-functional until
+  `_hf_client.py`'s `DEFAULT_MODEL` is updated to a currently-served model.
 - **Produces:** a working adaptive tutor for isolated signs (v1) — not yet
   packaged as `app/` (still a script), not yet difficulty-aware, not yet
   spaced-repetition-scheduled in the interval-algorithm sense. Both are
