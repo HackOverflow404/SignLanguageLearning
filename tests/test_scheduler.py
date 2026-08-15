@@ -77,6 +77,79 @@ def test_pick_next_empty_pool_raises():
         pass
 
 
+class _FakeRNG:
+    """Deterministic stand-in for `random.Random`: `.choices` always returns
+    the configured pick, `.random()` always returns the configured roll --
+    lets tests pin down the proactive-contrastive branch exactly, which a real
+    seeded PRNG can't do reliably since it depends on call order."""
+
+    def __init__(self, choice, roll):
+        self._choice = choice
+        self._roll = roll
+
+    def choices(self, population, weights, k=1):
+        return [self._choice]
+
+    def random(self):
+        return self._roll
+
+
+def test_just_drilled_sign_is_excluded_until_due_again():
+    m = MasteryState()
+    m.update("mother", {"handshape": True})  # clock=1, interval=1 -> due_at=2, not due yet
+    rng = random.Random(0)
+    picks = {pick_next(m, ["mother", "father"], rng=rng) for _ in range(50)}
+    # "mother" was just drilled and isn't due -- only "father" (never seen,
+    # always due) should ever come up while clock stays at 1
+    assert picks == {"father"}
+
+
+def test_falls_back_to_full_pool_when_nothing_is_due():
+    m = MasteryState()
+    m.update("mother", {"handshape": True})  # rep 1, interval=1
+    m.update("mother", {"handshape": True})  # rep 2, interval=3 -> due_at=5
+    m.update("father", {"handshape": True})  # rep 1, interval=1 -> due_at=4, clock=3
+    # neither sign is due yet (mother due at 5, father due at 4, clock is 3) --
+    # pick_next must not raise or stall, it should fall back to the full pool
+    assert m.is_due("mother") is False
+    assert m.is_due("father") is False
+    rng = random.Random(0)
+    picked = pick_next(m, ["mother", "father"], rng=rng)
+    assert picked in ("mother", "father")
+
+
+def test_proactive_contrastive_fires_for_a_well_mastered_pick():
+    m = MasteryState()
+    # within this pool "mother" has TWO minimal-pair partners (handshape vs.
+    # "water", minor_location vs. "father") -- any real partner counts as a
+    # successful redirect, the point is it's not "mother" itself
+    pairs = find_minimal_pairs(PHON, ["mother", "father", "water"])
+    for _ in range(10):
+        m.update("mother", {"minor_location": True})  # -> well above HIGH_MASTERY_THRESHOLD
+    rng = _FakeRNG(choice="mother", roll=0.0)  # roll < PROACTIVE_CONTRASTIVE_PROB always
+    picked = pick_next(m, ["mother", "father", "water"], minimal_pairs=pairs, rng=rng)
+    assert picked in ("father", "water")  # redirected away from "mother" to a real partner
+
+
+def test_proactive_contrastive_does_not_fire_when_the_roll_misses():
+    m = MasteryState()
+    pairs = find_minimal_pairs(PHON, ["mother", "father", "water"])
+    for _ in range(10):
+        m.update("mother", {"minor_location": True})
+    rng = _FakeRNG(choice="mother", roll=0.999)  # roll >= PROACTIVE_CONTRASTIVE_PROB
+    picked = pick_next(m, ["mother", "father", "water"], minimal_pairs=pairs, rng=rng)
+    assert picked == "mother"  # not redirected
+
+
+def test_proactive_contrastive_does_not_fire_for_a_weak_sign():
+    m = MasteryState()
+    pairs = find_minimal_pairs(PHON, ["mother", "father", "water"])
+    m.update("mother", {"minor_location": False})  # still weak
+    rng = _FakeRNG(choice="mother", roll=0.0)
+    picked = pick_next(m, ["mother", "father", "water"], minimal_pairs=pairs, rng=rng)
+    assert picked == "mother"  # no redirect -- not well-mastered yet
+
+
 if __name__ == "__main__":
     import sys
     failures = 0

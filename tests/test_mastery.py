@@ -5,7 +5,8 @@ Runs under pytest OR as a plain script (`python tests/test_mastery.py`).
 import tempfile
 from pathlib import Path
 
-from aslcv.learner.mastery import INITIAL_MASTERY, LEARNING_RATE, MasteryState
+from aslcv.learner.mastery import (INITIAL_EASE, INITIAL_MASTERY, LEARNING_RATE,
+                                    MIN_EASE, SECOND_REP_INTERVAL, MasteryState)
 
 
 def test_never_attempted_sign_reads_as_neutral_prior():
@@ -74,6 +75,67 @@ def test_save_load_round_trip():
     assert loaded.attempts == m.attempts
     assert loaded.last_seen == m.last_seen
     assert loaded.clock == m.clock
+    assert loaded.interval == m.interval
+    assert loaded.ease == m.ease
+    assert loaded.repetitions == m.repetitions
+
+
+def test_never_attempted_sign_is_always_due():
+    m = MasteryState()
+    assert m.is_due("mother") is True
+    assert m.due_at("mother") is None
+
+
+def test_full_pass_grows_interval_across_repetitions():
+    m = MasteryState()
+    m.update("mother", {"handshape": True})  # rep 1
+    assert m.interval["mother"] == 1
+    m.update("father", {"handshape": True})  # unrelated attempt, advances clock only
+    m.update("mother", {"handshape": True})  # rep 2
+    assert m.interval["mother"] == SECOND_REP_INTERVAL
+    ease_after_2 = m.ease["mother"]
+    assert ease_after_2 > INITIAL_EASE
+    m.update("father", {"handshape": True})
+    m.update("mother", {"handshape": True})  # rep 3 -- interval*ease now
+    assert m.interval["mother"] == round(SECOND_REP_INTERVAL * ease_after_2)
+
+
+def test_partial_pass_counts_as_a_miss_for_scheduling():
+    # ONE wrong judged parameter among several is still a miss for SM2
+    # purposes, even though most parameters matched -- a real full pass is
+    # required, not an average.
+    m = MasteryState()
+    m.update("mother", {"handshape": True})
+    m.update("mother", {"handshape": True, "movement": False})
+    assert m.interval["mother"] == 1  # reset, not grown to SECOND_REP_INTERVAL
+    assert m.repetitions["mother"] == 0
+
+
+def test_none_only_attempt_leaves_interval_untouched():
+    m = MasteryState()
+    m.update("mother", {"handshape": True})
+    interval_before = m.interval["mother"]
+    m.update("mother", {"movement": None})  # no judged parameter this time
+    assert m.interval["mother"] == interval_before
+
+
+def test_miss_resets_interval_and_lowers_ease():
+    m = MasteryState()
+    m.update("mother", {"handshape": True})
+    m.update("mother", {"handshape": True})  # rep 2, interval grows
+    m.update("mother", {"handshape": False})  # miss
+    assert m.interval["mother"] == 1
+    assert m.repetitions["mother"] == 0
+    assert m.ease["mother"] < INITIAL_EASE
+    assert m.ease["mother"] >= MIN_EASE
+
+
+def test_is_due_gates_on_interval_since_last_seen():
+    m = MasteryState()
+    m.update("mother", {"handshape": True})  # clock=1, interval=1 -> due_at=2
+    assert m.is_due("mother") is False  # clock still 1, not yet due
+    m.update("father", {"handshape": True})  # clock=2, unrelated attempt
+    assert m.is_due("mother") is True  # clock caught up to due_at
 
 
 def test_load_missing_file_returns_fresh_state():

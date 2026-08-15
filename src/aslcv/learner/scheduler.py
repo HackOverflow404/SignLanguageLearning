@@ -1,7 +1,7 @@
-"""What to drill next: gap-targeting + a light recency bias, plus automatic
-contrastive minimal-pair drills. A simple weighted-random heuristic, not a real
-spaced-repetition interval scheduler (SM2/Leitner) -- deliberately, for v1: see
-project_workflow.md's Phase 6 section for the scoping decision.
+"""What to drill next: gap-targeting via MasteryState's SM2-style due-gate, plus
+automatic contrastive minimal-pair drills -- both reactive (last attempt's wrong
+parameter) and proactive (a well-mastered sign gets proactively stress-tested
+against its minimal-pair partner, this scheduler's only notion of "difficulty").
 """
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ import random
 
 from ..grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 
-RECENCY_CAP = 20     # attempts since last seen at which the recency boost saturates
 WEAKNESS_FLOOR = 0.05  # a fully-mastered sign still keeps a small chance of being picked
+HIGH_MASTERY_THRESHOLD = 0.8    # "well-mastered enough to stress-test with a minimal pair"
+PROACTIVE_CONTRASTIVE_PROB = 0.5  # chance a well-mastered pick gets redirected to its partner
 
 
 def find_minimal_pairs(phon_labels: PhonologyLabels, signs) -> dict[str, list[tuple[str, str]]]:
@@ -41,6 +42,21 @@ def _contrastive_partner(minimal_pairs, sign, parameter, candidates):
     return None
 
 
+def _any_contrastive_partner(minimal_pairs, sign, candidates):
+    """Like `_contrastive_partner` but not limited to one parameter -- used for
+    the PROACTIVE stress-test path, which doesn't have a "wrong parameter" to
+    key off since nothing was graded wrong; any minimal-pair partner works."""
+    if not minimal_pairs:
+        return None
+    for pairs in minimal_pairs.values():
+        for a, b in pairs:
+            if a == sign and b in candidates:
+                return b
+            if b == sign and a in candidates:
+                return a
+    return None
+
+
 def pick_next(mastery, signs, last_sign=None, last_wrong_parameter=None,
               minimal_pairs=None, rng=None):
     """Next sign to drill from `signs` (the pre-validated, has-a-reference-clip
@@ -49,12 +65,22 @@ def pick_next(mastery, signs, last_sign=None, last_wrong_parameter=None,
     Fires a contrastive drill FIRST and unconditionally when the last attempt's
     focus mistake (`last_wrong_parameter`) has a minimal-pair partner for
     `last_sign` in the pool ("fire automatically when two signs differing in
-    one parameter get confused", per project_workflow.md's Phase 6 design) --
-    otherwise falls back to weighted-random gap-targeting: weight is
-    (weakness) x (recency boost), so a weak, long-unseen sign is likeliest,
-    a strong, just-drilled one is rarest but never impossible (WEAKNESS_FLOOR
-    keeps even a mastered sign reachable, since real-world skill can regress
-    and a session shouldn't ever fully starve a sign)."""
+    one parameter get confused", per project_workflow.md's Phase 6 design).
+
+    Otherwise: restricts the candidate pool to signs MasteryState considers
+    "due" (its SM2-style interval since last seen has elapsed) -- a sign just
+    drilled successfully is excluded until enough other attempts have passed,
+    same as SM2 skipping a well-known card. If nothing in the pool is due yet
+    (e.g. everything was just drilled), falls through to the full pool rather
+    than stalling -- a session should never run out of things to present.
+    Within that pool, weighted-random by weakness alone (WEAKNESS_FLOOR keeps
+    even a mastered sign reachable, since skill can regress).
+
+    Difficulty control: a pick that lands on an already well-mastered sign
+    (>= HIGH_MASTERY_THRESHOLD) has a chance of being redirected to its
+    minimal-pair partner instead -- proactively stress-testing a parameter the
+    learner hasn't been recently tripped up on, rather than only reacting
+    after a wrong verdict."""
     candidates = list(signs)
     if not candidates:
         raise ValueError("pick_next() needs at least one candidate sign")
@@ -64,10 +90,16 @@ def pick_next(mastery, signs, last_sign=None, last_wrong_parameter=None,
         return partner
 
     rng = rng or random
-    weights = []
-    for sign in candidates:
-        weakness = max(WEAKNESS_FLOOR, 1.05 - mastery.sign_mastery(sign))
-        gap = mastery.clock - mastery.last_seen.get(sign, -RECENCY_CAP)
-        recency = 1.0 + min(max(gap, 0), RECENCY_CAP) / RECENCY_CAP  # in [1, 2]
-        weights.append(weakness * recency)
-    return rng.choices(candidates, weights=weights, k=1)[0]
+
+    due = [sign for sign in candidates if mastery.is_due(sign)]
+    pool = due if due else candidates
+
+    weights = [max(WEAKNESS_FLOOR, 1.05 - mastery.sign_mastery(sign)) for sign in pool]
+    chosen = rng.choices(pool, weights=weights, k=1)[0]
+
+    if mastery.sign_mastery(chosen) >= HIGH_MASTERY_THRESHOLD and rng.random() < PROACTIVE_CONTRASTIVE_PROB:
+        stress_partner = _any_contrastive_partner(minimal_pairs, chosen, candidates)
+        if stress_partner is not None:
+            return stress_partner
+
+    return chosen

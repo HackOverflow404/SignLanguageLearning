@@ -74,9 +74,11 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 > directory. **Phase 8 (porting to a phone) is now also scoped**, deliberately
 > not started — see its section below for what of the current stack is
 > resource-appropriate for a phone (most of it) vs. what's real unstarted porting
-> work (most of the actual code). What's open: actual fluent Deaf review of
-> Phase 5b's engine output (a human bottleneck, not code), Phase 6's one
-> remaining deferred piece (difficulty control), and Phase 8 itself.
+> work (most of the actual code). **Phase 6's scheduler is now also a real
+> SM2-style spaced-repetition scheduler with a first difficulty-control signal**
+> (proactive minimal-pair stress-testing of well-mastered signs) — see Phase 6
+> status for the full writeup. What's open: actual fluent Deaf review of Phase
+> 5b's engine output (a human bottleneck, not code), and Phase 8 itself.
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -1097,13 +1099,14 @@ sentences. Templates cost arbitrary *structural* variety, not adaptiveness.
 **Scoping decision (made explicitly, not defaulted into):** v1 extends
 `diagnose_demo.py` rather than a new standalone app — its webcam loop, grading,
 and reference-clip plumbing were already proven; wrapping the adaptive loop
-around it is a much smaller diff than rebuilding that scaffolding. The
-scheduler is a simple weighted-random heuristic (gap-targeting + a light
-recency bias), not a real spaced-repetition interval algorithm (SM2/Leitner) —
-correct enough to close the loop end to end; the feedback presenter is
-templated English text, not an LLM call. Both are later, self-contained
-upgrades over what's built now, not blockers to having a working adaptive
-session.
+around it is a much smaller diff than rebuilding that scaffolding. v1's
+scheduler shipped as a simple weighted-random heuristic (gap-targeting + a
+light recency bias), not a real spaced-repetition interval algorithm — enough
+to close the loop end to end without blocking on it. **Now upgraded (see
+below)** to a real SM2-style interval scheduler plus a first difficulty-control
+signal; the feedback presenter is still templated English text by default,
+with an optional LLM pass (`llm_feedback.py`) layered on top, documented
+separately above.
 
 - **Learner model — DONE.** `src/aslcv/learner/mastery.py`'s `MasteryState`:
   per-sign, per-parameter mastery in [0, 1], EMA-updated (`LEARNING_RATE=0.3`
@@ -1114,15 +1117,36 @@ session.
   state, not project data) via an atomic temp-file + `os.replace` write, same
   convention as `extract_landmarks.py`'s cache writes. A logical clock (plain
   incrementing counter, not wall-clock) tracks recency deterministically.
-- **Adaptive engine — DONE (heuristic, not full spaced-repetition).**
-  `src/aslcv/learner/scheduler.py`'s `pick_next`: weighted-random over the
-  active target pool, weight = `max(WEAKNESS_FLOOR, 1.05 - sign_mastery) x
-  recency_boost` (recency saturates at 2x after `RECENCY_CAP=20` attempts
-  unseen) — biases toward weak, long-unseen signs while keeping even a
-  mastered sign reachable (skill can regress; nothing should ever be fully
-  starved). "Difficulty control" from the original spec is NOT implemented —
-  there's no notion of drill difficulty in v1, only which sign/parameter to
-  target next.
+- **Adaptive engine — DONE, now real spaced repetition + a first difficulty
+  signal, not just the v1 heuristic.** The scoping decision above's "later,
+  self-contained upgrade" was built: `MasteryState` gained an SM2-style
+  interval/ease-factor pair per sign (`interval`, `ease`, `repetitions`,
+  `INITIAL_EASE=2.5`, `MIN_EASE=1.3`, `MAX_EASE=3.0`, `SECOND_REP_INTERVAL=3`,
+  `MAX_INTERVAL=40`), adapted to the ONLY clock this project has — the logical
+  per-attempt tick, not wall-clock days, since a live single-session demo has
+  no "next day" to schedule against. `interval` is measured in attempts-of-
+  any-sign since a sign was last seen; `is_due(sign)`/`due_at(sign)` expose
+  when it next becomes eligible. `update()` treats a "good" attempt as ALL
+  judged parameters matching (a real full pass, same bar `focus_parameter`
+  already uses to decide whether to coach at all — one wrong parameter is a
+  miss for scheduling purposes, not partial credit); a `None`-only attempt
+  (nothing judged) leaves the interval untouched rather than guessing.
+  `scheduler.py`'s `pick_next` now gates its candidate pool on `is_due` before
+  weighting by weakness — a sign just drilled successfully is excluded until
+  enough OTHER attempts have passed, same as SM2 skipping a well-known card —
+  and falls back to the full pool if nothing is due yet rather than stalling a
+  session with nothing to present. **Difficulty control** (previously entirely
+  unimplemented) now has one concrete form: a pick that lands on an
+  already-well-mastered sign (`HIGH_MASTERY_THRESHOLD=0.8`) has a
+  `PROACTIVE_CONTRASTIVE_PROB=0.5` chance of being redirected to ANY of its
+  minimal-pair partners (`_any_contrastive_partner`, not restricted to one
+  parameter the way the existing reactive drill is) — proactively
+  stress-testing a parameter the learner hasn't recently been tripped up on,
+  rather than only reacting after a wrong verdict. 16 new tests
+  (`tests/test_mastery.py`, `tests/test_scheduler.py`, including a `_FakeRNG`
+  helper to pin down the proactive branch deterministically, since a real
+  seeded PRNG's call order isn't reliable for that). Full suite: **310
+  passed / 10 skipped.**
 - **Task generator (isolated + contrastive + sentence prompts) — ALL DONE,
   sentence prompts now built too.** `find_minimal_pairs` re-derives the same
   differ-in-exactly-one-parameter pairing `eval_minimal_pairs.py` uses for the
@@ -1384,6 +1408,50 @@ work, all unstarted:**
   clips actually reaching the device and the LLM feedback call working over a
   real mobile network path.
 
+### Phase 9 — Curriculum expansion (60 signs → full vocabulary) — status: not started, not scheduled
+
+Asked directly ("when do we start expanding from 60 signs to everything?"):
+there is no scheduled trigger for this in the build order above. Every phase
+through Phase 8 is scoped to work ON TOP OF the fixed 60-sign curriculum
+(Phase 0), not to grow it — recorded here so the answer doesn't have to be
+re-derived if asked again, and so this doesn't get scheduled by accident
+ahead of the phases it would actually depend on.
+
+- **The dataset itself is not the blocker.** ASL Citizen covers 2,731 signs
+  total (Phase 1), of which the current curriculum uses ~60 — the other
+  ~2,670 are already inside the same consented, IRB-approved corpus, just
+  unused. The dataset is confirmed still downloaded locally, so expansion
+  would not need a re-acquisition step, only re-running the existing
+  pipeline over more of what's already there.
+- **What actually has to happen per new sign**, same as Phase 1 did for the
+  original 60: confirm it resolves to a real ASL-LEX ID-gloss (the join key
+  everything downstream uses), extract cached keypoints across every
+  extractor in use (currently MediaPipe), and join its ASL-LEX phonological
+  labels (handshape/major-location/minor-location/movement/repeated).
+- **The embedding grader (Phase 4) would need retraining, not just more
+  cache.** `PoseGraderNet`'s phonological heads are already gated by
+  `MIN_SUPPORT` (3 distinct signs per label value) precisely because thin
+  classes can't be shown to generalize — going from 60 to hundreds/thousands
+  of signs changes the label distribution per parameter substantially (for
+  better in aggregate, likely worse for rare handshape/location classes
+  freshly introduced), so this is a full re-run of
+  `scripts/train_embedding_grader.py` and a fresh `PHASE4_REPORT.md`-style
+  validation pass, not a drop-in.
+- **The gloss rule engine's lexicon (Phase 5b)** is derived from
+  `curriculum.yaml`'s `english_lemmas` and fails closed at import time on any
+  ambiguous lemma (issue #12) — a much larger vocabulary raises the odds of a
+  real collision (two signs both plausibly claiming the same English word)
+  that has to be resolved by hand, not just a bigger table.
+- **Scale of the lift**: this is closer in size to Phases 0-4 combined
+  (curriculum selection at scale, re-extraction, re-training, re-validation)
+  than to a routine data-addition task — it should be proposed and scoped as
+  its own deliberate phase, prioritized against the currently open items
+  (spaced-repetition/difficulty scheduling, Phase 5b's Deaf review, Phase 8),
+  not started implicitly.
+- **Produces:** an expanded `curriculum.yaml`, full-vocabulary caches, a
+  retrained/revalidated `EmbeddingGrader`, and a re-verified gloss lexicon.
+- **Done when:** none of the above exists yet — this phase has not begun.
+
 ---
 
 ## Cross-cutting
@@ -1454,16 +1522,19 @@ work, all unstarted:**
         lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags (currently
                        #   lives inline in gloss_rules.py, built from curriculum.yaml)
         templates/     #   5c — correct-by-construction generation (later)
-      learner/         # Phase 6 v1 — DONE (heuristic, not full spaced-repetition)
+      learner/         # Phase 6 — DONE, real spaced repetition + a first
+                       #   difficulty signal, not just the v1 heuristic
         mastery.py     #   MasteryState: per-sign/per-parameter EMA mastery from
                         #   real ParameterVerdict.correct (None skipped, not
-                        #   averaged in); atomic JSON save/load
-                        #   (data/learner_state.json, gitignored)
+                        #   averaged in); SM2-style interval/ease per sign on the
+                        #   logical attempt-clock (is_due/due_at); atomic JSON
+                        #   save/load (data/learner_state.json, gitignored)
         scheduler.py    #   find_minimal_pairs (differ-in-one-parameter pairs,
-                        #   scoped to the active pool) + pick_next (weighted-
-                        #   random gap-targeting + recency, or an automatic
+                        #   scoped to the active pool) + pick_next (due-gated
+                        #   weighted-random by weakness, an automatic reactive
                         #   contrastive drill when the last mistake has a real
-                        #   partner sign)
+                        #   partner sign, and a proactive contrastive redirect
+                        #   for well-mastered picks -- the difficulty signal)
       generator/       # Phase 6 v1 + v2 — ALL DONE: isolated + contrastive
                         #   drills, feedback (templated + optional LLM), and
                         #   LLM sentence prompts (gloss-engine-gated)
