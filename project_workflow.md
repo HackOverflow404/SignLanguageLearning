@@ -1159,7 +1159,7 @@ session.
   read as an English → ASL composition example; continuous-sentence grading
   is still Phase 7, unbuilt, so `diagnose_demo.py` keeps grading only the
   isolated target sign exactly as before this existed. Same hosted-API/
-  fail-open pattern as `llm_feedback.py` (`Qwen/Qwen2.5-7B-Instruct`,
+  fail-open pattern as `llm_feedback.py` (`meta-llama/Llama-3.1-8B-Instruct`,
   `provider="auto"`, needs `HF_TOKEN`) — sharing a new `_hf_client.py` for
   the token/`.env` resolution logic both modules need identically, rather
   than risking two copies drifting apart. Blocking, same accepted tradeoff as
@@ -1179,7 +1179,7 @@ session.
   `coach_text_maybe_llm` is the optional upgrade, opt-in via
   `diagnose_demo.py --llm-feedback`: phrases the SAME pre-computed facts more
   naturally via HuggingFace's HOSTED Inference API
-  (`huggingface_hub.InferenceClient`, `Qwen/Qwen2.5-7B-Instruct` default,
+  (`huggingface_hub.InferenceClient`, `meta-llama/Llama-3.1-8B-Instruct` default,
   `provider="auto"`) — deliberately the hosted API, not a locally-run model,
   because of the Phase 8 mobile target below: a phone can't run even a small
   open LLM the way this desktop process could, so code built against the
@@ -1274,12 +1274,20 @@ session.
   raised 640→920 to fit the larger text without re-triggering the overlap
   bug at the margin. Full suite: **299 passed / 10 skipped.**
 
-  Separately noticed, not yet fixed: `Qwen/Qwen2.5-7B-Instruct` (the
-  `--llm-feedback`/`--sentence-prompts` default model) started failing live
-  HF calls with `model_not_supported` during this session — an HF Inference
-  Providers routing change, not a bug here. Both features fail open
-  correctly, so nothing breaks, but the LLM upgrade is non-functional until
-  `_hf_client.py`'s `DEFAULT_MODEL` is updated to a currently-served model.
+  Separately found and RESOLVED: `Qwen/Qwen2.5-7B-Instruct` (the prior
+  `--llm-feedback`/`--sentence-prompts` default model) was observed failing
+  live HF calls with `model_not_supported`, then succeeding again minutes
+  later with no code change. Investigated rather than just retried: HF's own
+  model API (`GET /api/models/<id>?expand[]=inferenceProviderMapping`,
+  checked directly) showed Qwen2.5-7B-Instruct served by only 2 providers
+  (`together`, `featherless-ai`) vs. `meta-llama/Llama-3.1-8B-Instruct`'s 4
+  (`novita`, `nscale`, `deepinfra`, `featherless-ai`) — thin provider
+  coverage under `provider="auto"` is exactly what predicts that flakiness.
+  `_hf_client.py`'s `DEFAULT_MODEL` swapped to Llama-3.1-8B-Instruct (same
+  8B size class, same `provider="auto"` pattern), verified live post-swap on
+  both `llm_coach_text` and `sentence_prompt_maybe_llm`. No test hardcodes
+  the model name, so the full suite was unaffected: **299 passed / 10
+  skipped.**
 - **Produces:** a working adaptive tutor for isolated signs (v1) — not yet
   packaged as `app/` (still a script), not yet difficulty-aware, not yet
   spaced-repetition-scheduled in the interval-algorithm sense. Both are

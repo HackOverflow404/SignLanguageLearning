@@ -11,11 +11,19 @@ from pathlib import Path
 # Repo root: src/aslcv/generator/_hf_client.py -> generator -> aslcv -> src -> root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Qwen2.5-7B-Instruct: small enough to be cheap/fast for a short phrasing
-# call, strong instruction-following for its size, widely available across HF
-# Inference Providers. provider="auto" lets HF route to whichever backend
-# actually serves it rather than hardcoding one.
-DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+# Llama-3.1-8B-Instruct: same size class as the alternatives (8B -- small
+# enough to be cheap/fast for a short phrasing call, large enough for solid
+# instruction-following), picked over Qwen2.5-7B-Instruct (used until this
+# session) specifically for provider REDUNDANCY under provider="auto": HF's
+# own model API (GET /api/models/<id>?expand[]=inferenceProviderMapping,
+# checked directly, not assumed) showed Qwen2.5-7B-Instruct served by only 2
+# providers (together, featherless-ai) vs. Llama-3.1-8B-Instruct's 4 (novita,
+# nscale, deepinfra, featherless-ai) -- and Qwen was observed failing live
+# with "not supported by any provider you have enabled" then succeeding
+# minutes later with no code change, exactly the flakiness thin provider
+# coverage predicts. More providers behind "auto" means one provider being
+# down/rate-limited is far less likely to take the whole call out.
+DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 DEFAULT_PROVIDER = "auto"
 DEFAULT_TIMEOUT = 6.0
 
