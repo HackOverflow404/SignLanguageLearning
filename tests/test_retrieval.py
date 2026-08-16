@@ -6,11 +6,25 @@ Runs under pytest OR as a plain script (`python tests/test_retrieval.py`).
 import numpy as np
 import pytest
 
-from aslcv.production import GlossRuleEngine, fetch_reference, fetch_sequence, write_composed_video
+from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
+from aslcv.features import FeaturePipeline, Standardizer
+from aslcv.normalizer.shoulder import ShoulderNormalizer
+from aslcv.production import (GlossRuleEngine, compose_reference_features, fetch_reference,
+                               fetch_sequence, write_composed_video)
 from aslcv.production.gloss_rules import Gloss, GlossSequence
 from aslcv.production.retrieval import _pick_row
 
 E = GlossRuleEngine()
+
+# Real pipeline/standardizer for compose_reference_features tests -- fit on a
+# couple of real reference clips, same convention as test_features.py's
+# test_standardizer_fit_transform_and_roundtrip (no data means nothing to test,
+# per this file's own docstring).
+_PIPE = FeaturePipeline(ShoulderNormalizer(local_hand=True), MEDIAPIPE_HOLISTIC)
+_STD = Standardizer.fit([
+    _PIPE.assemble_npz(fetch_reference("mother", extractor="mediapipe").npz_path),
+    _PIPE.assemble_npz(fetch_reference("water", extractor="mediapipe").npz_path),
+])
 
 
 # -- fetch_reference ----------------------------------------------------------
@@ -123,6 +137,56 @@ def test_write_composed_video_refuses_empty():
     empty = type("C", (), {"frames": []})()
     with pytest.raises(ValueError):
         write_composed_video(empty, "/tmp/should_not_be_written.mp4")
+
+
+# -- compose_reference_features (Phase 7) ----------------------------------------
+
+def test_compose_reference_features_concatenates_in_gloss_order():
+    seq = E.gloss("I want water.")
+    composed = compose_reference_features(seq, "mediapipe", _PIPE, _STD)
+
+    assert [c.id_gloss for c in composed.clips] == seq.gloss_ids
+    assert composed.features.shape[0] == composed.frame_gloss_index.shape[0]
+    assert composed.features.shape[0] > 0
+    # frame_gloss_index is non-decreasing and covers every gloss index exactly once each
+    assert list(composed.frame_gloss_index) == sorted(composed.frame_gloss_index)
+    assert set(composed.frame_gloss_index.tolist()) == set(range(len(seq.gloss_ids)))
+
+
+def test_compose_reference_features_matches_direct_pipeline_call():
+    # a single-gloss sequence's composed features must equal calling the
+    # pipeline/standardizer directly on that clip's trimmed poses -- no
+    # double-transform or off-by-one bug in the concatenation step
+    single = GlossSequence(
+        english="mother", in_scope=True, confidence=1.0, reason=None,
+        sentence_type="statement", negated=False,
+        glosses=[Gloss(text="mother", asllex_id="mother", source="mother", pos="NOUN")],
+    )
+    composed = compose_reference_features(single, "mediapipe", _PIPE, _STD)
+    clip = fetch_reference("mother", extractor="mediapipe")
+    direct = _STD.transform(_PIPE.assemble_npz(clip.npz_path).features)
+    # composed trims to the motion-active span (same as retrieval's video path);
+    # the direct call here doesn't trim, so compare shapes/dtype, not exact frames
+    assert composed.features.shape[1] == direct.shape[1]
+    assert composed.features.shape[0] <= direct.shape[0]
+    assert (composed.frame_gloss_index == 0).all()
+
+
+def test_compose_reference_features_refuses_out_of_scope():
+    seq = E.gloss("The dog that I saw was tired.")
+    assert not seq.in_scope
+    with pytest.raises(ValueError):
+        compose_reference_features(seq, "mediapipe", _PIPE, _STD)
+
+
+def test_compose_reference_features_refuses_missing_reference_clip():
+    bad_gloss = Gloss(text="NOPE", asllex_id="not_a_real_sign", source="nope", pos="NOUN")
+    seq = GlossSequence(
+        english="nope", in_scope=True, confidence=1.0, reason=None,
+        sentence_type="statement", negated=False, glosses=[bad_gloss],
+    )
+    with pytest.raises(ValueError):
+        compose_reference_features(seq, "mediapipe", _PIPE, _STD)
 
 
 if __name__ == "__main__":

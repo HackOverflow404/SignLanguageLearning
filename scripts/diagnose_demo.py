@@ -52,6 +52,20 @@ presentational only, still not graded (continuous-sentence grading is Phase 7).
     .venv/bin/python scripts/diagnose_demo.py --targets you,me,water
     .venv/bin/python scripts/diagnose_demo.py --sentence-prompts     # + LLM example sentences per target
     .venv/bin/python scripts/diagnose_demo.py --selftest             # no camera: verify the whole path offline
+
+Phase 7 -- SENTENCE MODE (`--sentence`): grades a full sentence via forced
+alignment (aslcv.grading.alignment.align_and_grade) instead of one isolated
+sign -- the target gloss sequence is always known (Phase 5b's rule engine
+glossed it), so this is forced alignment against a known reference, not open
+continuous recognition (see project_workflow.md's Phase 7 section for the
+full reasoning and validation). ONE continuous capture per attempt (no
+background re-grading -- alignment needs the complete attempt); `[n]` grades
+it once CAPTURED, updates mastery per word, and coaches the first word with a
+real mistake. Not adaptive across sentences (grades exactly the one sentence
+given; picking what to practice next is out of this scope).
+
+    .venv/bin/python scripts/diagnose_demo.py --sentence "I want water."
+    .venv/bin/python scripts/diagnose_demo.py --selftest --sentence "I want water."  # no camera
 """
 import argparse
 import csv
@@ -74,11 +88,13 @@ from aslcv.generator.feedback import focus_parameter, readable_value
 from aslcv.generator.llm_feedback import coach_text_maybe_llm
 from aslcv.generator.sentence_prompts import sentence_prompt_maybe_llm
 from aslcv.generator.sign_description import describe_sign
+from aslcv.grading.alignment import align_and_grade
 from aslcv.grading.embedding_grader import EmbeddingGrader
 from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 from aslcv.learner.mastery import MasteryState
 from aslcv.learner.scheduler import find_minimal_pairs, pick_next
 from aslcv.pipeline_config import add_pipeline_args, build_pipeline
+from aslcv.production import GlossRuleEngine, fetch_sequence
 from live_demo import _poses_from_npz, build_extractor  # reuse, don't rebuild
 
 REPO = Path(__file__).resolve().parents[1]
@@ -254,6 +270,22 @@ def resolve_targets(args, rows, grader):
                 f"fix data/manifest.csv.")
         resolved.append((sign, row))
     return resolved
+
+
+def resolve_sentence(args, grader):
+    """Phase 7: --sentence's gloss sequence + composed reference video,
+    pre-validated the same fail-closed way resolve_targets() validates the
+    single-sign cycle -- refuses to reach the live loop with an out-of-scope
+    sentence or a gloss missing a cached reference clip."""
+    engine = GlossRuleEngine()
+    seq = engine.gloss(args.sentence)
+    if not seq.in_scope:
+        raise SystemExit(f"sentence refused by the gloss engine: {seq.reason}")
+    try:
+        composed_video = fetch_sequence(seq, extractor=grader.extractor)
+    except ValueError as exc:
+        raise SystemExit(f"cannot resolve reference clips for this sentence: {exc}")
+    return seq, composed_video
 
 
 # ------------------------------------------------------------- config verification --
@@ -486,6 +518,80 @@ def compose_canvas(ref_frame, live_frame, target_sign, phon_labels, result, stal
     return divider_canvas
 
 
+SENT_ROW_H = 44
+
+
+def draw_sentence_header(canvas, seq, capture_state):
+    """Sentence-mode analogue of draw_verdict's header + capture badge --
+    same layout convention (opaque panels, top-down), just with the target
+    text/gloss line instead of a single sign name."""
+    _panel_bg(canvas, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
+    _text(canvas, f'TARGET SENTENCE   "{seq.english}"', 18, 40, F_HEADER, ACCENT, 2)
+    _divider(canvas, HEADER_H)
+
+    badge_top = HEADER_H
+    _panel_bg(canvas, badge_top, badge_top + BADGE_H, color=BG_HEADER, alpha=0.93)
+    label, color, hint = _CAPTURE_STATE_DISPLAY[capture_state]
+    cv2.circle(canvas, (32, badge_top + 30), 9, color, -1, cv2.LINE_AA)
+    _text(canvas, f"{label}   glosses: {' '.join(seq.gloss_ids)}", 54, badge_top + 38, F_BODY, color, 2)
+    _text(canvas, hint, 54, badge_top + 62, F_TINY, TEXT_MUTED)
+    _divider(canvas, badge_top + BADGE_H)
+    return badge_top + BADGE_H
+
+
+def draw_sentence_results(canvas, content_top, graded):
+    """One compact row per gloss: how many of its judged parameters MATCHed,
+    plus fidelity. Deliberately a scoreboard, not draw_verdict's full
+    per-parameter detail view -- a multi-word sentence's 5-parameters-per-word
+    breakdown wouldn't fit on screen at once (see project_workflow.md's Phase
+    7 step 6 scoping); the coach-text band below still names the single most
+    useful correction, same "one thing at a time" philosophy as single-sign
+    mode."""
+    if graded is None:
+        _panel_bg(canvas, content_top, content_top + 50, color=BG_PANEL, alpha=0.94)
+        _text(canvas, "sign the whole sentence, then press [n] to grade", 20, content_top + 32,
+              F_SMALL, TEXT_MUTED)
+        return content_top + 50
+
+    content_h = 20 + SENT_ROW_H * len(graded)
+    _panel_bg(canvas, content_top, content_top + content_h, color=BG_PANEL, alpha=0.94)
+    y = content_top + 16
+    for g in graded:
+        matched = sum(1 for v in g.result.parameters.values() if v.correct is True)
+        judged = sum(1 for v in g.result.parameters.values() if v.correct is not None)
+        color = MATCH_COLOR if judged and matched == judged else OFF_COLOR
+        row = f"{g.target_sign:<14} {matched}/{judged} matched    fidelity {g.result.fidelity:.3f}"
+        _text(canvas, row, 20, y + 28, F_SMALL, color, 2)
+        y += SENT_ROW_H
+    return content_top + content_h
+
+
+def compose_sentence_canvas(ref_frame, live_frame, seq, graded, capture_state, fps, ms,
+                             coach_text=None, coach_text_for=None, height=920):
+    def fit(frame, fallback_w=460):
+        if frame is None:
+            return np.full((height, fallback_w, 3), 18, np.uint8)
+        h, w = frame.shape[:2]
+        scale = height / h
+        return cv2.resize(frame, (max(1, int(w * scale)), height))
+
+    left = fit(ref_frame)
+    right = fit(live_frame)
+
+    _panel_bg(left, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
+    _text(left, "REFERENCE (stitched clips)", 18, 40, F_HEADER, ACCENT, 2)
+    _divider(left, HEADER_H)
+
+    badge_bottom = draw_sentence_header(right, seq, capture_state)
+    content_bottom = draw_sentence_results(right, badge_bottom, graded)
+    coach_bottom = draw_coach_text(right, coach_text, coach_text_for, y_top=content_bottom)
+    draw_status_bar(right, coach_bottom, fps, ms)
+
+    divider_canvas = np.hstack([left, right])
+    cv2.line(divider_canvas, (left.shape[1], 0), (left.shape[1], height), DIVIDER, 2, cv2.LINE_AA)
+    return divider_canvas
+
+
 # ------------------------------------------------------------------------ live ----
 
 def run_live(args):
@@ -658,6 +764,125 @@ def run_live(args):
         cv2.destroyAllWindows()
 
 
+def run_live_sentence(args):
+    """Phase 7 step 6: sentence mode (`--sentence "..."`). One fixed target
+    sentence, ONE continuous capture bounded by CaptureBuffer tuned for a
+    multi-sign attempt (`--sentence-settle-frames`/`--sentence-capture-max`,
+    larger than single-sign mode's defaults -- see step 5's writeup and
+    tests/test_capture.py's sentence-mode tests for why), then forced-aligned
+    and graded segment-by-segment via `align_and_grade` on `[n]`.
+
+    Deliberately NO background grade_loop thread the way single-sign mode
+    has: alignment needs the COMPLETE attempt against the COMPLETE
+    reference, not a growing partial window graded continuously -- there is
+    no meaningful "live partial verdict" for a forced alignment the way there
+    is for a single isolated sign.
+
+    Deliberately NOT adaptive (no next-sentence picker): this grades ONE
+    sentence per run. Sequencing which sentence to practice next is a bigger
+    feature than Phase 7's 6-step scope covers (see project_workflow.md) --
+    single-sign mode's scheduler is unaffected and untouched by this."""
+    grader = EmbeddingGrader.build(args.checkpoint, which=args.which)
+    args.extractor = args.extractor or grader.extractor
+    skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
+    verify_pipeline_matches_checkpoint(args, grader, skeleton)
+
+    seq, composed_video = resolve_sentence(args, grader)
+    print(f'target sentence: "{seq.english}" -> {" ".join(seq.gloss_ids)}')
+    print(DISCLAIMER)
+
+    mastery = MasteryState.load(args.mastery_path)
+
+    ref = ReferenceLoop()
+    ref.set_target(seq.english, "composed", composed_video.frames)
+
+    energy_fn = functools.partial(hand_motion_energy, grader.pipeline.normalizer, skeleton)
+    capture = CaptureBuffer(energy_fn, motion_threshold=grader.pipeline.motion_threshold,
+                             settle_frames=args.sentence_settle_frames, preroll=args.preroll,
+                             max_frames=args.sentence_capture_max)
+    win_lock = threading.Lock()
+    state = {"graded": None, "coach_text": None, "coach_text_for": None}
+
+    print(f"opening camera {args.camera} in LIVE mode (extractor {args.extractor}"
+          f"{', gpu' if args.gpu else ''}) ...")
+    extractor, _ = build_extractor(args.extractor, RunningMode.LIVE, gpu=args.gpu)
+    k = len(skeleton.names)
+    zero_pose = lambda: Pose(np.zeros((k, 2), np.float32), np.zeros(k, np.float32))
+
+    cap = cv2.VideoCapture(args.camera)
+    if not cap.isOpened():
+        extractor.close()
+        raise SystemExit(f"cannot open camera {args.camera}")
+
+    print("controls: [q]/ESC quit   [c] clear capture and retry   "
+          "[n] grade the completed attempt (only once CAPTURED)")
+    fps_t, fps_n, fps = time.time(), 0, 0.0
+    try:
+        while cap.isOpened():
+            ok, frame = cap.read()
+            if not ok:
+                break
+            pose = extractor.extract(frame)  # RAW frame, mirrored=False -> matches refs (issue #6)
+            with win_lock:
+                capture.append(pose if pose is not None else zero_pose())
+                capture_state = capture.state
+                snap = list(capture.frames)
+
+            live_canvas = extractor.draw(frame, pose) if pose is not None else frame.copy()
+            if args.mirror:
+                live_canvas = cv2.flip(live_canvas, 1)  # display-only selfie flip
+
+            ref_frame = ref.next_frame()
+            canvas = compose_sentence_canvas(ref_frame, live_canvas, seq, state["graded"], capture_state,
+                                              fps, 0.0, coach_text=state["coach_text"],
+                                              coach_text_for=state["coach_text_for"])
+            cv2.imshow("ASL diagnose demo -- sentence mode", canvas)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                break
+            if key == ord("c"):
+                with win_lock:
+                    capture.reset()
+                state["graded"] = None
+            if key == ord("n") and capture_state == "settled":
+                try:
+                    _, graded = align_and_grade(grader, snap, seq)
+                except Exception as exc:  # noqa: BLE001 -- keep the demo alive on a bad attempt
+                    print("alignment/grading error:", exc)
+                    graded = None
+                if graded is not None:
+                    state["graded"] = graded
+                    for g in graded:
+                        correct_by_parameter = {p: v.correct for p, v in g.result.parameters.items()}
+                        mastery.update(g.target_sign, correct_by_parameter)
+                    mastery.save(args.mastery_path)
+
+                    # coach the FIRST segment with a real mistake -- one correction
+                    # at a time, same philosophy as single-sign mode's coach_text
+                    worst = next((g for g in graded if focus_parameter(g.result.parameters) is not None), None)
+                    if worst is not None:
+                        text = coach_text_maybe_llm(worst.target_sign, worst.result.parameters,
+                                                     use_llm=args.llm_feedback)
+                        state["coach_text"] = text
+                        state["coach_text_for"] = worst.target_sign
+                        print(f"  [{worst.target_sign}] {text}")
+                    else:
+                        state["coach_text"] = "Great job -- every judged parameter matched across the sentence."
+                        state["coach_text_for"] = seq.english
+                    for g in graded:
+                        print(f"  {g.target_sign:<14} frames {g.frame_range}  fidelity {g.result.fidelity:.3f}")
+
+            fps_n += 1
+            if time.time() - fps_t >= 0.5:
+                fps = fps_n / (time.time() - fps_t)
+                fps_t, fps_n = time.time(), 0
+    finally:
+        extractor.close()
+        cap.release()
+        cv2.destroyAllWindows()
+
+
 # --------------------------------------------------------------------- selftest ----
 
 def run_selftest(args):
@@ -712,6 +937,23 @@ def run_selftest(args):
         result = grader.grade_against_poses(emulate(clips[0]), target_sign)
         print_result(true_sign, target_sign, result)
 
+    if args.sentence:
+        print(f'\nsentence selftest: "{args.sentence}"')
+        seq, _composed_video = resolve_sentence(args, grader)
+        attempt_poses = []
+        missing = [g for g in seq.gloss_ids if not val_by_sign.get(g)]
+        if missing:
+            raise SystemExit(f"sentence selftest needs a val clip for each of {missing}, none cached")
+        for id_gloss in seq.gloss_ids:
+            npz = cache_dir / f"{val_by_sign[id_gloss][0]['video_id']}.npz"
+            attempt_poses.extend(_poses_from_npz(npz))
+        _, graded = align_and_grade(grader, attempt_poses, seq)
+        for g in graded:
+            print(f"  {g.target_sign:<14} frames {g.frame_range}  fidelity {g.result.fidelity:.3f}  "
+                  f"focus={focus_parameter(g.result.parameters)}")
+        print("sentence selftest complete -- same align_and_grade/compose_sentence_canvas "
+              "path run_live_sentence uses.")
+
     print("\nselftest complete -- this is the offline path; a live failure is camera/lighting, not grading.")
     print(DISCLAIMER)
 
@@ -733,6 +975,20 @@ def main():
                     help="live capture: rest frames kept before motion starts (natural clip lead-in)")
     ap.add_argument("--capture-max", type=int, default=150,
                     help="live capture: safety cap (frames) so a stuck/very slow attempt can't grow forever")
+    ap.add_argument("--sentence", default=None,
+                    help="Phase 7: switch to sentence mode -- grade a full sentence (e.g. "
+                         "'I want water.') via forced alignment instead of one isolated sign. "
+                         "Refused (SystemExit) if the gloss engine rejects it as out of scope or "
+                         "any word lacks a cached reference clip.")
+    ap.add_argument("--sentence-settle-frames", type=int, default=30,
+                    help="--sentence only: larger than --settle-frames' single-sign default since "
+                         "a multi-sign attempt has several motion rises with brief pauses between "
+                         "words that must NOT be misread as the end of the attempt (see "
+                         "project_workflow.md's Phase 7 step 5 -- tuned conservatively, not "
+                         "validated against a real camera in this environment)")
+    ap.add_argument("--sentence-capture-max", type=int, default=400,
+                    help="--sentence only: safety cap sized for several signs' worth of frames, "
+                         "not one (same untuned-conservative caveat as --sentence-settle-frames)")
     ap.add_argument("--mirror", dest="mirror", action="store_true", default=True,
                     help="selfie-mirror the DISPLAY only (default on; grading uses the raw frame)")
     ap.add_argument("--no-mirror", dest="mirror", action="store_false")
@@ -760,6 +1016,8 @@ def main():
 
     if args.selftest:
         run_selftest(args)
+    elif args.sentence:
+        run_live_sentence(args)
     else:
         run_live(args)
 

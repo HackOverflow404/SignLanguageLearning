@@ -899,16 +899,21 @@ curriculum signs across all 4 extractors.
 Scope was narrowed from the original "show correct form" + "compose grading
 target" phrasing after two design questions surfaced discussing it:
 
-- **Only video concatenation is being built now; pose-sequence concatenation
-  (a multi-sign grading target) is deferred, not dropped.** Grading a live
-  continuous attempt against a concatenated pose target requires knowing where
-  one sign ends and the next begins *in that live attempt* — that's Phase 7's
-  unsolved continuous-recognition segmentation problem (see Phase 7 below).
-  Today's live pipeline has only Phase 2's manual fixed-window + keypress reset
-  (`c`), no automatic boundary detector. A pose-sequence target built now would
-  have no consumer until Phase 7 exists, so this isn't premature scoping —
-  it's literally unusable before then. Per-sign grading targets already exist
-  (Phase 4's `EmbeddingGrader`/`DTWGrader` reference banks).
+- **Only video concatenation was built at the time; pose-sequence
+  concatenation (a multi-sign grading target) was deferred, not dropped —
+  since resolved, see below.** Grading a live continuous attempt against a
+  concatenated pose target requires knowing where one sign ends and the next
+  begins *in that live attempt* — that was Phase 7's unsolved continuous-
+  recognition segmentation problem at the time (see Phase 7 below). The live
+  pipeline had only Phase 2's manual fixed-window + keypress reset (`c`), no
+  automatic boundary detector. A pose-sequence target built then would have
+  had no consumer until Phase 7 existed, so this wasn't premature scoping —
+  it was literally unusable before then. Per-sign grading targets already
+  existed independently (Phase 4's `EmbeddingGrader`/`DTWGrader` reference
+  banks) and were unaffected. **Now built**: `compose_reference_features`
+  (Phase 7 step 2, in `retrieval.py` alongside `fetch_sequence`) is that
+  feature-space target, now that step 1's `dtw_align` gives it a real
+  consumer — see Phase 7's section for the full writeup.
 - **No generative model for smoothing stitched clip transitions.** Considered
   and rejected: interpolating frames between two real clips to hide a hard cut
   would fabricate motion no signer produced and present it as a model of
@@ -1323,7 +1328,7 @@ separately above.
   sessions too, not just within one**) — nothing fixed except the reference
   correctness.
 
-### Phase 7 — Sentence grading via forced alignment — status: scoped, not started
+### Phase 7 — Sentence grading via forced alignment — status: DONE (all 6 steps), live-capture tuning untested against a real camera
 
 **Reframed from the original "CTC-style continuous recognition" spec, deliberately.**
 Industry CSLR (the RWTH PHOENIX lineage's CTC decoders, DeepMind's SL2T, the
@@ -1359,55 +1364,160 @@ translation — so it's the only framing considered.
 **What's actually new, in build/validate order (each step gates the next —
 no live-UI work until the algorithm is proven on data that already exists):**
 
-1. **`dtw_align()`** (extend `grading/dtw_grader.py` or a sibling
-   `alignment.py`) — `dtw_distance()` today only keeps the previous DP row and
-   returns a scalar cost; forced alignment needs the actual warp path. Needs
-   the full DP table (or backpointers) and a traceback, reusing the exact same
-   `_pairwise_euclidean` cost function — a bounded, mechanical change, not a
-   new algorithm.
-2. **`compose_reference_features(gloss_sequence, extractor, pipeline,
-   standardizer)`** — the feature-space sibling of `fetch_sequence`: for each
-   gloss, load its cached reference pose, trim via `hand_motion_energy`/
-   `motion_active_span` (identical convention to `retrieval.py`), run through
-   `FeaturePipeline.assemble()` + the trained standardizer, and concatenate —
-   returning both the concatenated feature array AND a parallel per-frame
-   "which target-gloss index" array (trivial from the concatenation, same
-   bookkeeping as `ComposedReference.clip_frame_ranges`).
-3. **`align_and_grade(attempt_poses, gloss_sequence)`** — the orchestrator:
-   featurize the attempt, DTW-align it against the composed reference from
-   (2), project the reference's known per-frame gloss labels onto the attempt
-   through the warp path to get per-gloss `(start, stop)` ranges IN THE
-   ATTEMPT, then call `grade_against_poses` per segment (unchanged) and return
-   one `GradeResult` per target sign.
-4. **Validate BEFORE any live wiring, on data that already exists.** Build
-   synthetic "continuous" sequences by concatenating REAL cached clips
-   end-to-end (exactly `ComposedReference`'s trick, but keeping the ground-
-   truth boundaries this time since we did the concatenating) and measure (a)
-   boundary frame error against the known-true cut points and (b) per-segment
-   grading accuracy vs. grading each source clip in isolation. This is the
-   real go/no-go checkpoint, same rigor as every other phase's validate-
-   before-wire discipline (Phase 4's held-out val split, `--selftest`'s exact-
-   reproduction check). **Honest caveat to carry forward regardless of the
-   result:** concatenated real clips have a hard cut and no coarticulation —
-   this measures the algorithm on an easier problem than genuine fluent
-   continuous signing, the same direction of optimism `compose_sentence.py`'s
-   video output already discloses ("stitched citation clips, not fluent
-   connected signing").
-5. **Only after (4) clears its bar:** extend live capture. `CaptureBuffer`
-   today bounds ONE isolated attempt (idle → active → settled on a single
-   motion rise-and-fall). A multi-sign sentence has several such rises with
-   possibly-shallow dips between words — a real risk that needs tuning and
-   testing, not assumed away: too aggressive a settle threshold ends capture
-   mid-sentence, too lenient one waits too long after real completion. First
-   cut: keep `CaptureBuffer` bounding the WHOLE attempt (first motion to
-   FINAL rest) with a higher `settle_frames`, run `align_and_grade` inside
-   that span, and treat inter-sign pause tolerance as a parameter to tune
-   against real recordings, not solve analytically.
-6. **`diagnose_demo.py` sentence mode**, last: target = an ordered gloss list
-   (Phase 5b's engine output, optionally Phase 6's LLM-written prompt text)
-   shown alongside Phase 5a's existing stitched reference video; one
-   continuous capture; N per-sign verdicts rendered in sequence (reusing
-   `draw_verdict` per segment) instead of one.
+1. **`dtw_align()` — DONE.** Added to `grading/dtw_grader.py` alongside
+   `dtw_distance` (not a separate module — small enough, and keeping both
+   next to each other makes "these share one recurrence" obvious on read).
+   Keeps the full `(n+1, m+1)` DP table (`dtw_distance` only keeps a rolling
+   row) and backtraces from `(n, m)` to `(0, 0)`, preferring diagonal on
+   ties. Returns `(length_normalized_distance, path)`; the distance always
+   matches what `dtw_distance(a, b, band)` returns for the same inputs — same
+   cost function, same recurrence, verified directly by test, not just
+   asserted in the docstring. 5 new tests (`tests/test_dtw_grader.py`):
+   distance-matches-dtw_distance (banded and unbanded), path monotonicity
+   and endpoint coverage, identity-sequence path is the diagonal, empty
+   input returns no path, and the actual forced-alignment use case —
+   concatenating two far-apart synthetic clusters with a known boundary,
+   adding noise, and confirming the warp path recovers the true cut point
+   within a few frames. Full suite: **315 passed / 10 skipped.**
+2. **`compose_reference_features()` — DONE.** Added to `production/retrieval.py`
+   alongside `fetch_sequence` (the feature-space sibling, same file, same
+   fail-closed rule — not a separate module). Refactored `fetch_sequence`'s
+   inline resolve-and-validate loop into a shared `_resolve_clips()` first, so
+   the video path (Phase 5a) and the feature path (Phase 7) can't silently
+   drift on which clips they pick or how they refuse — behavior-preserving,
+   existing `fetch_sequence` tests unchanged. `_trimmed_poses()` mirrors
+   `_trimmed_frames()`'s exact trim signal (`hand_motion_energy`/
+   `motion_active_span`) but slices the cached POSES instead of video frames.
+   Returns `ComposedReferenceFeatures(gloss_sequence, clips, features,
+   frame_gloss_index)` — `frame_gloss_index[t]` is the 0-based index into
+   `gloss_sequence.gloss_ids` that concatenated feature-frame `t` belongs to
+   (the ground truth step 4's synthetic benchmark checks against, and what
+   step 3's alignment projects onto a live attempt). `pipeline`/`standardizer`
+   are passed in, not constructed here — a caller (an `EmbeddingGrader`)
+   already owns its trained instances, and reusing them exactly is what keeps
+   the reference and the live attempt in the same feature space. 4 new tests
+   (`tests/test_retrieval.py`): concatenation order + `frame_gloss_index`
+   coverage, a single-gloss sequence matches a direct pipeline call
+   (shape/dtype, since composed trims and the direct call doesn't), and both
+   fail-closed paths (out-of-scope, missing reference). Full suite: **319
+   passed / 10 skipped.**
+3. **`align_and_grade(grader, attempt_poses, gloss_sequence)` — DONE.** New
+   module `grading/alignment.py` (needs `EmbeddingGrader`, `dtw_align`, AND
+   `compose_reference_features` together, so it doesn't fit cleanly inside
+   any one of the three existing files it draws from). Featurizes the
+   attempt with the SAME `grader.pipeline`/`grader.standardizer` instance
+   `compose_reference_features` used for the reference (so both sides of the
+   alignment share one feature space), DTW-aligns via `dtw_align`, then
+   `_segment_ranges()` projects the reference's known per-frame gloss labels
+   onto the attempt: for each gloss, the `[min, max]` attempt frame aligned
+   to ANY reference frame carrying that gloss's index. Provably can't miss a
+   gloss — a complete warp path is a monotonic staircase from `(0,0)` to
+   `(n-1,m-1)`, so every reference column index is visited at least once,
+   which is the actual guarantee the implementation leans on rather than
+   hoping. Each segment is then graded with `grade_against_poses` completely
+   unchanged — no grading logic duplicated. Returns
+   `(alignment_distance, [AlignedGrade, ...])`, mirroring `dtw_align`'s own
+   `(distance, path)` shape; `AlignedGrade` carries `target_sign`,
+   `frame_range`, and the `GradeResult` together, since step 4's validation
+   benchmark needs the frame range (to check against ground truth) and step
+   6's live UI needs the `GradeResult` (to render), not just one or the
+   other. 5 new tests (`tests/test_alignment.py`, needs a trained checkpoint,
+   same skip-if-absent convention as `test_embedding_grader.py`): concatenate
+   the SAME real reference clips `compose_reference_features` would resolve
+   into a synthetic "continuous attempt" (a small-scale rehearsal of step 4's
+   actual validation trick) and check segment order, monotonicity/coverage,
+   that a segment fidelity-ranks its true target better than a mismatched
+   one (relative check, not a pinned absolute distance whose scale isn't
+   documented anywhere), a degenerate single-gloss sequence needs no special
+   casing, and the empty-attempt refusal. Full suite: **324 passed / 10
+   skipped.**
+4. **Validate BEFORE any live wiring — DONE, result: PASS, proceed to step 5.**
+   `scripts/eval_forced_alignment.py`: for N random synthetic sentences (2-4
+   curriculum signs each), builds the reference side via `align_and_grade`'s
+   own `compose_reference_features` (TRAIN-split clips, exactly what a real
+   session uses) and the "attempt" by concatenating each sign's TRIMMED
+   VAL-split clip (held-out footage, genuinely different takes from the
+   reference — not the trivial identical-clip case `tests/test_alignment.py`'s
+   unit tests use for plumbing checks only). Reports two numbers, deliberately
+   NOT against the true phonology label for the second one: (a) boundary
+   error — `|predicted segment length - true segment length| / true length`,
+   since the true length is known exactly (we did the concatenating); (b)
+   grading agreement — does the aligned segment's `grade_against_poses`
+   verdict match grading that SAME clip in isolation, per parameter,
+   excluding thin/insufficient-support targets (the `MIN_SUPPORT` gate, same
+   exclusion convention as every other report in this project)? Agreement
+   with the isolated grade (not the true label) is the right bar here
+   specifically because the isolated grader itself is only ~81% accurate
+   (`PHASE4_REPORT.md`) — comparing against ground truth would conflate
+   alignment error with already-documented, unrelated model error; this
+   metric isolates what THIS step adds.
+
+   **Real numbers** (100 trials, seed=1, `mediapipe`, `PHASE7_ALIGNMENT_REPORT.md`):
+   boundary error — median 4.0% relative, mean 12.8% (mean 4.7 frames
+   absolute) — with a real, disclosed tail: **19/305 segments (6.2%) exceed
+   50% relative boundary error**, not hidden behind the median. Grading
+   agreement across all 5 parameters: **92.4%-94.6% correct-flag agreement,
+   85.4%-93.8% exact predicted-label agreement**. **Verdict: PASS** — the
+   median case is tight (a few frames off), and even including the outlier
+   tail, per-parameter grading agreement stays in the low-to-mid 90s across
+   every parameter, meaning misalignment rarely flips a verdict. Proceeding
+   to step 5. **Honest caveat, unchanged regardless of this result:**
+   concatenated real clips have a hard cut and no coarticulation — this
+   measures an EASIER problem than genuine fluent continuous signing, the
+   same direction of optimism `compose_sentence.py`'s video output already
+   discloses ("stitched citation clips, not fluent connected signing"); the
+   6.2% boundary-error tail is a real, disclosed weak spot to watch once live
+   data (step 5+) is available, not something this benchmark can rule out.
+5. **`CaptureBuffer` tuned for a whole sentence — DONE.** Confirmed (4)'s
+   bar cleared, then addressed the real risk head-on rather than assuming it
+   away: `CaptureBuffer` already bounds ONE attempt idle → active → settled
+   on a motion rise-and-fall, and a multi-sign sentence has SEVERAL such
+   rises with brief dips between words — too small a `settle_frames` (tuned
+   for a single sign) reads an inter-word pause as the end of the attempt.
+   **No structural change to `capture.py`** — this was a parameter-tuning
+   decision, not a new state machine, exactly as scoped. New CLI flags
+   `--sentence-settle-frames` (default 30, vs. single-sign's 8) and
+   `--sentence-capture-max` (default 400, vs. 150) in `diagnose_demo.py`.
+   Since no real camera is available in this environment to tune against
+   directly, verified the ONLY honest way available: 2 new synthetic tests
+   in `tests/test_capture.py` — a 3-sign energy pattern with brief inter-sign
+   dips (shorter than the sentence-mode `settle_frames`) confirms the buffer
+   rides through all of them and only settles after the true final rest; a
+   second test with a single-sign-scale `settle_frames` on the IDENTICAL
+   pattern confirms the risk is real, not hypothetical (settles mid-sentence,
+   at the first pause). Explicitly still **untuned against real recordings**
+   — the chosen defaults are conservative, not measured; flagged as-is
+   rather than presented as validated. Full suite: **326 passed / 10
+   skipped.**
+6. **`diagnose_demo.py` sentence mode — DONE.** `--sentence "I want water."`
+   glosses the sentence via Phase 5b's engine (fail-closed, same spirit as
+   `resolve_targets`), resolves both the display reference (Phase 5a's
+   `fetch_sequence`) and — inside `run_live_sentence`, the new mode's own
+   top-level function, kept separate from `run_live` rather than branching
+   deep inside it — grades via `align_and_grade` on `[n]`, once `CaptureBuffer`
+   reports CAPTURED. Deliberately **no background re-grading thread** the way
+   single-sign mode has: forced alignment needs the COMPLETE attempt against
+   the COMPLETE reference, there's no meaningful partial verdict for it.
+   `draw_sentence_results` renders a compact per-word SCOREBOARD (matched/
+   judged parameter count + fidelity per word), not `draw_verdict`'s full
+   5-parameter breakdown per word — a real, deliberate scope choice: a
+   multi-word sentence's full per-parameter detail for every word wouldn't
+   fit on screen at once, and the coach-text band still names the single
+   most useful correction (first segment with a real mistake), keeping the
+   "one thing at a time" philosophy `coach_text` already uses. Mastery is
+   updated per word exactly like single-sign mode. Deliberately **NOT
+   adaptive across sentences** — grades exactly the one sentence given;
+   picking the next sentence to practice is a bigger feature outside this
+   6-step scope, single-sign mode's scheduler is untouched. Verified two
+   ways, no camera available: (a) `--selftest --sentence "..."` extends the
+   existing offline selftest to build a synthetic attempt from cached val
+   clips and run it through the real `align_and_grade` path — confirmed
+   working end-to-end (`me`/`want_2`/`water` segments produced with sane
+   frame ranges and fidelities); (b) `compose_sentence_canvas` rendered
+   against synthetic noise (the same busy-camera-feed stand-in every prior UI
+   change in this file was verified with) in both the pre-grade and
+   post-grade states — confirmed no layout bugs (panels touch edge-to-edge,
+   no overlap, top-down flow holds through the new scoreboard section too).
 
 **Deliberately still out of scope even once this ships:** genuine free
 continuous signing with real coarticulation (this always grades an attempt at
@@ -1420,10 +1530,17 @@ reference, never classification/generation).
 
 **Done when:** `align_and_grade` reproduces known boundaries on the
 concatenated-real-clips benchmark at an accuracy the DTW baseline's own
-minimal-pair numbers make a fair target for, and `diagnose_demo.py` can grade
-a live multi-sign sentence attempt segment-by-segment against a Phase 5b-
-generated target, with mastery/scheduler updated per sign exactly as the
-isolated-sign loop already does today.
+minimal-pair numbers make a fair target for (✅ step 4, PASS), and
+`diagnose_demo.py` can grade a live multi-sign sentence attempt
+segment-by-segment against a Phase 5b-generated target, with mastery updated
+per sign exactly as the isolated-sign loop already does today (✅ step 6).
+**All 6 steps done.** The one remaining gap between "done" and "validated
+against real signing": `CaptureBuffer`'s sentence-mode tuning (step 5) is
+verified only against synthetic energy patterns, never a real camera in this
+environment — real-world tuning of `--sentence-settle-frames`/
+`--sentence-capture-max` against an actual signer is the honest next check
+before trusting sentence mode's capture boundaries the way single-sign
+mode's are already trusted.
 
 ### Phase 8 — Port to a phone — status: not started, scoped only
 
@@ -1549,6 +1666,103 @@ ahead of the phases it would actually depend on.
 
 ---
 
+## Research aside — CTC-CSLR vs. forced alignment — status: DONE, isolated comparison, NOT a phase
+
+**Deliberately NOT numbered as a phase and NOT part of the shipped product.**
+Built and run once, entirely inside `src/aslcv/research/` + three `scripts/`,
+to empirically answer "how does the industry-standard approach to continuous
+sign recognition (CTC-based CSLR) compare to this project's own forced-
+alignment system?" — after a design-fork question surfaced this directly:
+CTC is structurally the N-way open-vocabulary classifier CLAUDE.md's
+non-negotiables explicitly rule out for the product (a classifier must emit
+SOME label and will confidently mislabel a malformed attempt as a real
+sign), and "free-form translation" is explicitly out of scope. Rather than
+silently building it into the product or silently skipping the request, the
+scope was proposed and confirmed first: an isolated benchmark, framed
+honestly as "a CTC architecture trained on this project's own data," never
+"SOTA" (real SOTA — DeepMind's SL2T — trains on 100k+ hours across 50+
+languages; this trains on ~950 synthetic sentences built from this
+curriculum's own 1,874 clips).
+
+**What was built:**
+- `src/aslcv/research/synthetic_sentences.py` — `make_trial`, factored OUT of
+  `scripts/eval_forced_alignment.py` (Phase 7 step 4's own validation
+  benchmark) rather than reimplemented, so both the Phase 7 benchmark and
+  this comparison generate IDENTICAL synthetic continuous sentences
+  (concatenated real, trimmed, held-out clips with known ground-truth
+  boundaries) — a true apples-to-apples comparison, not two independently-
+  drifting generators.
+- `src/aslcv/research/ctc_cslr.py` — `CTCEncoder` (a BiGRU + linear head over
+  vocab+blank classes, sized to roughly match `PoseGraderNet`'s combined
+  stream capacity — not a strawman), `greedy_decode` (CTC's real use case:
+  no known target), `forced_align` (the fair comparison point: given the
+  TRUE label sequence, the standard CTC Viterbi forced-alignment recurrence
+  over the blank-interleaved extended target — the same *kind* of algorithm
+  as `dtw_align`, just CTC's version), and `word_error_rate`/`edit_distance`.
+  `forced_align`'s correctness is independently verified, not just asserted:
+  a Viterbi best-path log-prob can never exceed `nn.CTCLoss`'s own full
+  marginal (which sums over every valid path) — `tests/test_ctc_cslr.py`
+  checks this directly on a random instance, the strongest available check
+  short of re-deriving the algorithm a second way.
+- `scripts/train_ctc_cslr.py` — trains on ~950 synthetic sentences (TRAIN-
+  split clips), using the SAME `FeaturePipeline`/`Standardizer` the trained
+  `EmbeddingGrader` checkpoint already uses (borrowed from it, not rebuilt),
+  so the comparison isolates the *approach*, not a difference in feature
+  engineering. 40 epochs, ~126s on this machine's GPU. Reports train/val WER
+  every epoch, same "never hide the gap" discipline as
+  `train_embedding_grader.py` — and there IS a real gap: train WER reaches
+  **0.0%**, val WER plateaus around **32-34%**, disclosed plainly, not
+  buried.
+- `scripts/eval_ctc_vs_alignment.py` — runs BOTH systems on 100 identical
+  held-out synthetic sentences (`CTC_VS_ALIGNMENT_REPORT.md`), measuring
+  three things explicitly flagged as NOT all directly comparable (the
+  asymmetry itself is the finding):
+  1. **Open-set recognition (CTC's real use case)**: free-decode WER
+     **34.5% mean / 33.3% median**. `align_and_grade` has no analogous
+     number — it never guesses a sequence, the target is always known.
+  2. **Forced alignment given the TRUE sequence (the fair comparison)**:
+     boundary error — `align_and_grade` **12.8% mean / 4.0% median** vs.
+     CTC forced-align **96.6% mean / 97.0% median**. Investigated rather
+     than reported blind, since a number that close to total failure could
+     as easily be a bug: manual inspection of a real trial confirmed the
+     trained CTC model learned extremely "peaky" posteriors (blank wins on
+     74/77 frames by a huge margin on one representative trial; the real
+     label spikes for only 1-2 frames) — a well-documented, genuine property
+     of vanilla CTC training, not a bug in `forced_align` (which is
+     independently correctness-checked, see above). Greedy decoding
+     tolerates a spike that brief; Viterbi forced alignment correctly finds
+     exactly where it is, producing a 1-2-frame segment for a sign whose
+     true length was 35-42 frames. Known mitigations (entropy
+     regularization, a dedicated alignment objective) exist in the
+     literature and were deliberately NOT applied, since the goal was a fair
+     vanilla-CTC comparison on this project's own data, not a maximally-
+     optimized CTC pipeline.
+  3. **Grading agreement on the resulting segments** (same metric Phase 7
+     step 4 already reports for `align_and_grade`, computed identically for
+     CTC's forced-aligned segments): `align_and_grade` **92.4%-94.6%** across
+     all 5 parameters vs. CTC forced-align **33.5%-58.9%** — the direct
+     downstream consequence of (2)'s catastrophic boundaries.
+
+**The actual finding, stated plainly:** on this project's own small dataset,
+CTC is a reasonable open-vocabulary recognizer (34.5% WER isn't bad for
+~950 synthetic training sentences with zero real continuous footage) but a
+poor *forced aligner* without extra work most CTC-CSLR systems don't need
+to do (because they're not usually asked to align to a KNOWN sequence).
+Forced alignment (`align_and_grade`) is dramatically better at the ONE thing
+this project actually needs — segmenting a KNOWN target sentence — while
+needing zero sequence-labeled training data at all (training-free DTW over
+an `EmbeddingGrader` trained only on isolated single-sign clips) and
+structurally cannot ever confidently mislabel a malformed attempt as some
+other real sign, since it never guesses an identity in the first place. This
+empirically confirms, rather than just asserts, CLAUDE.md's non-negotiable
+("grade by distance to a reference, never N-way classification") was the
+right call for this specific product.
+
+Full suite unaffected (research code, no product code changed): **336
+passed / 10 skipped.**
+
+---
+
 ## Cross-cutting
 
 - **Deaf review (ongoing gate):** the rule engine and grammar corrections are an
@@ -1587,7 +1801,13 @@ ahead of the phases it would actually depend on.
       pipeline_config.py # DONE — add_pipeline_args/build_pipeline: every script builds the
                         #   feature pipeline identically + prints the resolved config each run
       grading/         # DONE — DTW baseline + Phase 4 EmbeddingGrader
-        dtw_grader.py  #   Phase 2 — training-free nearest-reference DTW (baseline)
+        dtw_grader.py  #   Phase 2 — training-free nearest-reference DTW (baseline);
+                       #   Phase 7 step 1 — dtw_align, the path-returning sibling of
+                       #   dtw_distance, for forced alignment
+        alignment.py   #   Phase 7 step 3 — align_and_grade: DTW-aligns an attempt
+                       #   against compose_reference_features's composed reference,
+                       #   projects boundaries onto the attempt, grades each segment
+                       #   via grade_against_poses unchanged
         phonology_labels.py # Phase 4 — per-parameter label vocab (sorted, curriculum-
                        #   derived) + per-class support counts + MIN_SUPPORT gate
         embedding_model.py  # Phase 4 — PoseGraderNet (multi-stream BiGRU encoder +
@@ -1609,9 +1829,10 @@ ahead of the phases it would actually depend on.
         retrieval.py   #   5a — DONE: fetch_reference (id_gloss -> real clip,
                        #   one formalized selection rule) + fetch_sequence
                        #   (GlossSequence -> trimmed, hard-cut, concatenated
-                       #   video; fail-closed) + write_composed_video. No
-                       #   pose-sequence concatenation (deferred to Phase 7 --
-                       #   see its module docstring).
+                       #   video; fail-closed) + write_composed_video. Phase 7
+                       #   step 2 also lives here: compose_reference_features
+                       #   (same fail-closed resolution, feature space instead
+                       #   of pixels, for forced alignment).
         rules/         #   5b — declarative drop/reorder/NMM rules (reviewable data;
                        #   still Python control flow today, not yet extracted here)
         lexicon.py     #   5b — English lemma → ID-gloss, verb-class tags (currently

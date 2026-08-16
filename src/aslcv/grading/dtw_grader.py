@@ -80,6 +80,74 @@ def dtw_distance(a: np.ndarray, b: np.ndarray, band: "int | None" = None) -> flo
     return float(total) / (n + m) if np.isfinite(total) else inf
 
 
+def dtw_align(a: np.ndarray, b: np.ndarray, band: "int | None" = None) -> "tuple[float, list[tuple[int, int]]]":
+    """Like `dtw_distance`, but also returns the optimal warp path -- needed
+    for FORCED ALIGNMENT (Phase 7: projecting a known reference's per-frame
+    gloss labels onto a live attempt), which `dtw_distance` alone can't give
+    since it only keeps the previous DP row and discards it as it goes.
+
+    Shares the identical recurrence and cost function as `dtw_distance` (same
+    `_pairwise_euclidean`, same length-normalization, same `band` semantics)
+    so the returned distance always matches what `dtw_distance(a, b, band)`
+    would return -- this is a superset, not a different algorithm. The only
+    difference is keeping the FULL (n+1, m+1) DP table instead of a rolling
+    row, so the path can be backtraced -- O(n*m) memory, fine at the
+    single-attempt scale this is used at (never call this over a whole
+    reference bank the way `dtw_distance` is inside `DTWGrader`; use
+    `dtw_distance` there).
+
+    Returns `(length_normalized_distance, path)` where `path` is a list of
+    `(i, j)` 0-indexed frame pairs into `a` and `b`, in increasing order,
+    covering the start and end of both sequences.
+    """
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    n, m = a.shape[0], b.shape[0]
+    if n == 0 or m == 0:
+        return float("inf"), []
+
+    cost = _pairwise_euclidean(a, b)  # (n, m)
+    inf = float("inf")
+    dp = np.full((n + 1, m + 1), inf, dtype=np.float64)
+    dp[0, 0] = 0.0
+    ratio = m / n
+    for i in range(1, n + 1):
+        if band is None:
+            lo, hi = 1, m
+        else:
+            center = i * ratio
+            lo = max(1, int(center - band))
+            hi = min(m, int(center + band) + 1)
+        row = cost[i - 1]
+        dp_prev, dp_cur = dp[i - 1], dp[i]
+        for j in range(lo, hi + 1):
+            best = dp_prev[j]
+            if dp_prev[j - 1] < best:
+                best = dp_prev[j - 1]
+            if dp_cur[j - 1] < best:
+                best = dp_cur[j - 1]
+            dp_cur[j] = row[j - 1] + best
+
+    total = dp[n, m]
+    if not np.isfinite(total):
+        return inf, []
+
+    path = []
+    i, j = n, m
+    while i > 0 and j > 0:
+        path.append((i - 1, j - 1))
+        diag, up, left = dp[i - 1, j - 1], dp[i - 1, j], dp[i, j - 1]
+        best = min(diag, up, left)
+        if diag <= best:
+            i, j = i - 1, j - 1
+        elif up <= best:
+            i -= 1
+        else:
+            j -= 1
+    path.reverse()
+    return float(total) / (n + m), path
+
+
 class DTWGrader:
     """Nearest-reference DTW grader over a fixed set of signs."""
 

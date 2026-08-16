@@ -23,7 +23,9 @@ from .gloss_rules import (
 )
 from .retrieval import (
     ComposedReference,
+    ComposedReferenceFeatures,
     ReferenceClip,
+    compose_reference_features,
     fetch_reference,
     fetch_sequence,
     write_composed_video,
@@ -37,7 +39,9 @@ __all__ = [
     "gloss_sentence",
     "ReferenceClip",
     "ComposedReference",
+    "ComposedReferenceFeatures",
     "fetch_reference",
     "fetch_sequence",
+    "compose_reference_features",
     "write_composed_video",
 ]

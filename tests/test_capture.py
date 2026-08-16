@@ -81,6 +81,55 @@ def test_settled_buffer_frozen_until_reset():
     assert len(buf.frames) == frozen_len
 
 
+def test_sentence_mode_survives_brief_inter_sign_pauses():
+    """Phase 7 step 5: a multi-sign sentence attempt has SEVERAL motion
+    rises, with brief dips between words rather than one clean rise-and-fall.
+    A `settle_frames` tuned for single-sign use (short) would end the capture
+    at the first inter-word pause; a larger `settle_frames` (sentence-mode
+    default) must ride through short internal dips and only settle at the
+    genuine final rest -- this is the "tune the existing state machine's
+    parameters, don't build a new one" step 5 decision, verified here since
+    no real camera is available to tune against directly (see
+    project_workflow.md's Phase 7 section)."""
+    # three "signs" (frames 5-14, 20-29, 35-44), each separated by a 5-frame
+    # dip (well under settle_frames=15), then a real 20-frame final rest --
+    # the last motion frame is index 44
+    energies = ([0.0] * 5 + [1.0] * 10 + [0.0] * 5 + [1.0] * 10 + [0.0] * 5
+                + [1.0] * 10 + [0.0] * 20)
+    last_motion_frame = 44
+    buf = CaptureBuffer(_energy_fn(energies), motion_threshold=0.5,
+                         settle_frames=15, preroll=3, max_frames=200)
+    for i in range(last_motion_frame + 1):  # through the sentence's own last sign
+        buf.append(i)
+        assert buf.state != "settled", (
+            f"settled prematurely at frame {i}, before the sentence itself even "
+            f"finished -- a brief inter-sign pause was misread as the end")
+    # after the sentence ends, correctly needs settle_frames MORE quiet frames
+    # before settling -- not settled yet, not stuck forever either
+    for i in range(last_motion_frame + 1, last_motion_frame + 1 + 14):
+        buf.append(i)
+        assert buf.state != "settled"
+    buf.append(last_motion_frame + 15)  # the 15th consecutive quiet frame
+    assert buf.state == "settled"
+
+
+def test_sentence_mode_settle_frames_too_small_settles_mid_sentence():
+    """The negative case: confirms the risk step 5's plan flagged is real,
+    not hypothetical -- the SAME energy pattern above, but with a
+    single-sign-scale settle_frames, DOES end capture at the first inter-sign
+    pause. This is why sentence mode needs its own larger default, not the
+    single-sign default reused."""
+    energies = ([0.0] * 5 + [1.0] * 10 + [0.0] * 5 + [1.0] * 10 + [0.0] * 5
+                + [1.0] * 10 + [0.0] * 20)
+    buf = CaptureBuffer(_energy_fn(energies), motion_threshold=0.5,
+                         settle_frames=4, preroll=3, max_frames=200)
+    for i in range(25):  # well before the sentence actually ends
+        buf.append(i)
+        if buf.state == "settled":
+            break
+    assert buf.state == "settled"  # settled too early, mid-sentence
+
+
 def test_energy_fn_failure_degrades_to_plain_trailing_window():
     def raising_fn(frames):
         raise RuntimeError("no hand blocks")

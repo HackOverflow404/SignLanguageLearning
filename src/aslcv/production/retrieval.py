@@ -1,18 +1,24 @@
 """Phase 5a — fetch real reference clips. Retrieval, never generation.
 
-Two entry points:
+Three entry points:
     fetch_reference(id_gloss, extractor)        -> ReferenceClip   (one sign)
     fetch_sequence(gloss_sequence, extractor)    -> ComposedReference (a whole
         Phase 5b GlossSequence's worth, concatenated into one playable video)
+    compose_reference_features(gloss_sequence, extractor, pipeline, standardizer)
+        -> ComposedReferenceFeatures (the same GlossSequence, concatenated in
+        FEATURE space instead of pixels, for Phase 7's forced alignment)
 
-Deliberately builds VIDEO concatenation only, not a concatenated POSE-SEQUENCE
-grading target. Grading a live continuous attempt against such a target would
-require knowing where one sign ends and the next begins in that attempt -- an
-unsolved problem (Phase 7's continuous-recognition segmentation; today's live
-pipeline only has Phase 2's manual fixed-window + keypress reset). A pose-
-sequence target built now would have no consumer until Phase 7 exists, so it
-is left out rather than built as unusable scaffolding. Per-sign grading
-targets already exist (Phase 4's EmbeddingGrader/DTWGrader reference banks).
+`fetch_sequence`'s VIDEO concatenation (Phase 5a, for display) and
+`compose_reference_features`'s FEATURE concatenation (Phase 7, for grading a
+continuous attempt) share the identical resolve-and-trim rule (`_resolve_clips`,
+`hand_motion_energy`/`motion_active_span`) so a reference clip trims identically
+whether it's being shown or graded against. The feature-space target was
+deliberately NOT built until now: grading a live continuous attempt against it
+requires knowing where one sign ends and the next begins IN THE ATTEMPT, which
+needed `grading.dtw_grader.dtw_align`'s warp path (Phase 7 step 1) to exist
+first -- see project_workflow.md's Phase 7 section for the full plan. Per-sign
+grading targets already exist independently (Phase 4's EmbeddingGrader/
+DTWGrader reference banks) and are unaffected by any of this.
 
 Concatenation never uses a generative model to smooth the join between clips
 -- CLAUDE.md's non-negotiable: "Retrieve reference video, never generate it.
@@ -35,7 +41,7 @@ import numpy as np
 
 from ..extractor.coco_wholebody import COCO_WHOLEBODY
 from ..extractor.mediapipe import MEDIAPIPE_HOLISTIC
-from ..features import hand_motion_energy, motion_active_span
+from ..features import FeaturePipeline, Standardizer, hand_motion_energy, motion_active_span
 from ..grading.embedding_dataset import _load_poses_npz
 from ..normalizer.shoulder import ShoulderNormalizer
 from .gloss_rules import GlossSequence
@@ -115,6 +121,38 @@ def fetch_reference(id_gloss: str, extractor: str = "mediapipe") -> ReferenceCli
     )
 
 
+def _resolve_clips(gloss_sequence: GlossSequence, extractor: str) -> list[ReferenceClip]:
+    """Every gloss in an in-scope GlossSequence resolved to a reference clip
+    with a cached pose sequence for `extractor`. Fail-closed: raises rather
+    than return a partial resolution if the sequence itself is out of scope,
+    empty, or any gloss has no cached reference. Shared by `fetch_sequence`
+    (video) and `compose_reference_features` (features) -- ONE resolution
+    rule, so the two concatenation paths can't silently drift on which clips
+    they pick or how they refuse."""
+    if not gloss_sequence.in_scope:
+        raise ValueError(
+            f"refusing to resolve an out-of-scope GlossSequence: {gloss_sequence.reason}")
+    if not gloss_sequence.glosses:
+        raise ValueError("refusing to resolve an empty GlossSequence")
+
+    clips: list[ReferenceClip] = []
+    missing: list[str] = []
+    for id_gloss in gloss_sequence.gloss_ids:
+        try:
+            clip = fetch_reference(id_gloss, extractor=extractor)
+        except KeyError:
+            missing.append(f"{id_gloss}: not a known sign")
+            continue
+        if clip.npz_path is None:
+            missing.append(f"{id_gloss}: no cached reference for extractor={extractor!r}")
+            continue
+        clips.append(clip)
+    if missing:
+        raise ValueError(
+            "refusing to resolve -- missing reference clip(s) for: " + "; ".join(missing))
+    return clips
+
+
 @dataclass
 class ComposedReference:
     """A whole GlossSequence's worth of reference clips, concatenated."""
@@ -158,36 +196,27 @@ def _trimmed_frames(clip: ReferenceClip, skeleton) -> tuple[list[np.ndarray], fl
     return frames[start:stop], fps
 
 
+def _trimmed_poses(clip: ReferenceClip, skeleton) -> list:
+    """This clip's cached POSES, cut to the same motion-active span
+    `_trimmed_frames` trims the video to -- the feature-space analogue used
+    by `compose_reference_features`, sharing the identical trim signal/
+    thresholds so a reference clip trims identically whether it's being
+    shown (video) or graded against (features). Requires `clip.npz_path` to
+    already be resolved -- same fail-closed precondition as `_trimmed_frames`."""
+    poses = _load_poses_npz(clip.npz_path)
+    energy = hand_motion_energy(_TRIM_NORMALIZER, skeleton, poses)
+    start, stop = motion_active_span(energy, _MOTION_THRESHOLD, _MOTION_PAD_FRAMES)
+    return poses[start:stop]
+
+
 def fetch_sequence(gloss_sequence: GlossSequence, extractor: str = "mediapipe") -> ComposedReference:
     """Resolve every gloss in an in-scope GlossSequence to a reference clip,
     trim each to its motion-active span, and hard-cut them together into one
     ordered frame sequence -- retrieval + concatenation, never generation
-    (see module docstring). Fail-closed: refuses (raises) rather than return
-    a partial composition if the sequence itself is out of scope, or if any
-    gloss has no cached reference clip for `extractor`.
+    (see module docstring). Fail-closed via `_resolve_clips`.
     """
-    if not gloss_sequence.in_scope:
-        raise ValueError(
-            f"refusing to compose an out-of-scope GlossSequence: {gloss_sequence.reason}")
-    if not gloss_sequence.glosses:
-        raise ValueError("refusing to compose an empty GlossSequence")
-
+    clips = _resolve_clips(gloss_sequence, extractor)
     skeleton = skeleton_for(extractor)
-    clips: list[ReferenceClip] = []
-    missing: list[str] = []
-    for id_gloss in gloss_sequence.gloss_ids:
-        try:
-            clip = fetch_reference(id_gloss, extractor=extractor)
-        except KeyError:
-            missing.append(f"{id_gloss}: not a known sign")
-            continue
-        if clip.npz_path is None:
-            missing.append(f"{id_gloss}: no cached reference for extractor={extractor!r}")
-            continue
-        clips.append(clip)
-    if missing:
-        raise ValueError(
-            "refusing to compose -- missing reference clip(s) for: " + "; ".join(missing))
 
     all_frames: list[np.ndarray] = []
     clip_frame_ranges: list[tuple[int, int]] = []
@@ -202,6 +231,58 @@ def fetch_sequence(gloss_sequence: GlossSequence, extractor: str = "mediapipe") 
     return ComposedReference(
         gloss_sequence=gloss_sequence, clips=clips, frames=all_frames,
         fps=fps, clip_frame_ranges=clip_frame_ranges,
+    )
+
+
+@dataclass
+class ComposedReferenceFeatures:
+    """A whole GlossSequence's worth of reference clips, concatenated in
+    FEATURE space -- the grading-side sibling of `ComposedReference`, which
+    concatenates video for display instead. This is Phase 7's forced-
+    alignment target: `frame_gloss_index[t]` gives the 0-based index into
+    `gloss_sequence.gloss_ids` that concatenated feature-frame `t` belongs
+    to, letting `dtw_align`'s warp path project known reference boundaries
+    onto a live attempt's frames."""
+
+    gloss_sequence: GlossSequence
+    clips: list[ReferenceClip]
+    features: np.ndarray       # (T, F) standardized, concatenated, trimmed
+    frame_gloss_index: np.ndarray  # (T,) int64 -- which gloss_ids index each row belongs to
+
+
+def compose_reference_features(gloss_sequence: GlossSequence, extractor: str,
+                                pipeline: FeaturePipeline, standardizer: Standardizer,
+                                ) -> ComposedReferenceFeatures:
+    """The feature-space sibling of `fetch_sequence`: resolve every gloss to a
+    reference clip (same `_resolve_clips` fail-closed rule), trim each to its
+    motion-active span (same signal, on poses instead of pixels), run each
+    through `pipeline`/`standardizer` -- the SAME pipeline/standardizer the
+    live attempt will be featurized with, so the two sides of the eventual
+    DTW alignment are in the same feature space -- and concatenate.
+
+    `pipeline`/`standardizer` are passed in rather than constructed here: a
+    caller (e.g. an `EmbeddingGrader`) already owns its own trained pipeline/
+    standardizer, and reusing that exact instance is what keeps the reference
+    and the attempt comparable (mismatched standardization would corrupt
+    every distance the same way a mismatched live FeaturePipeline config
+    already fails closed against in diagnose_demo.py).
+    """
+    clips = _resolve_clips(gloss_sequence, extractor)
+    skeleton = skeleton_for(extractor)
+
+    feature_arrays: list[np.ndarray] = []
+    frame_gloss_index: list[int] = []
+    for gloss_idx, clip in enumerate(clips):
+        trimmed_poses = _trimmed_poses(clip, skeleton)
+        feature_clip = pipeline.assemble(trimmed_poses)
+        feats = standardizer.transform(feature_clip.features)
+        feature_arrays.append(feats)
+        frame_gloss_index.extend([gloss_idx] * feats.shape[0])
+
+    return ComposedReferenceFeatures(
+        gloss_sequence=gloss_sequence, clips=clips,
+        features=np.concatenate(feature_arrays, axis=0),
+        frame_gloss_index=np.array(frame_gloss_index, dtype=np.int64),
     )
 
 
