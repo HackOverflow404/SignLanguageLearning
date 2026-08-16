@@ -407,16 +407,22 @@ def draw_verdict(canvas, result, target_sign, stale, capture_state, mastery=None
     return content_top + content_h
 
 
-def draw_status_bar(canvas, y_top, fps, grade_ms):
+def draw_status_bar(canvas, y_top, fps, grade_ms, controls="[q]uit   [c]lear   [n]ext"):
     """Status/disclaimer bar, drawn starting exactly at `y_top` (wherever the
     content above it actually ended) and extending to the canvas bottom --
     never pinned to a fixed offset from the bottom, so it can't be squeezed
-    or overlapped if the content above it turned out taller than expected."""
+    or overlapped if the content above it turned out taller than expected.
+
+    `controls` defaults to single-sign mode's exact original text (unchanged
+    behavior for every existing caller); sentence mode passes its own
+    STATE-AWARE string (see `_sentence_controls`) -- a static "[n]ext" is
+    actively wrong there ([n] grades, it doesn't cycle to a next target, and
+    it does nothing at all until an attempt is CAPTURED)."""
     h = canvas.shape[0]
     disclaimer_lines = textwrap.wrap(DISCLAIMER, width=_wrap_width(canvas, 18, F_TINY))
     _panel_bg(canvas, y_top, h, color=BG_HEADER, alpha=0.93)
     _divider(canvas, y_top)
-    status = f"{fps:.0f} fps   grade {grade_ms:.0f} ms   [q]uit   [c]lear   [n]ext"
+    status = f"{fps:.0f} fps   grade {grade_ms:.0f} ms   {controls}"
     _text(canvas, status, 18, y_top + 28, F_TINY, TEXT_SECONDARY)
     for i, line in enumerate(disclaimer_lines):
         _text(canvas, line, 18, y_top + 28 + (i + 1) * 26, F_TINY, TEXT_MUTED)
@@ -457,6 +463,14 @@ def draw_reference_footer(canvas, y_top, band_h, description, sentence_lines):
     _wrapped(canvas, [(description, TEXT_PRIMARY)], 18, y + heading_h, F_SMALL, desc_line_h, thickness=2)
 
 
+def _coach_text_height(canvas, text, sign):
+    if text is None:
+        return 0
+    full = f"Coach ({sign}): {text}"
+    lines_n = _wrapped_line_count(canvas, [full], 18, F_SMALL)
+    return 20 + 14 + lines_n * 30
+
+
 def draw_coach_text(canvas, text, sign, y_top):
     """Draws the coaching line from the attempt just recorded on the
     PREVIOUS [n] press (templated coach_text, or an LLM phrasing of the same
@@ -468,13 +482,87 @@ def draw_coach_text(canvas, text, sign, y_top):
     submitted with [n]) -- never draws a band for nothing."""
     if text is None:
         return y_top
+    band_h = _coach_text_height(canvas, text, sign)
     full = f"Coach ({sign}): {text}"
-    lines_n = _wrapped_line_count(canvas, [full], 18, F_SMALL)
     line_h = 30
-    band_h = 20 + 14 + lines_n * line_h
     _panel_bg(canvas, y_top, y_top + band_h, color=BG_PANEL, alpha=0.94)
     _wrapped(canvas, [(full, COACH_COLOR)], 18, y_top + 14 + line_h, F_SMALL, line_h, thickness=2)
     _divider(canvas, y_top)
+    return y_top + band_h
+
+
+def _coach_texts_height(canvas, entries):
+    """`entries`: list of (sign, text, color). Computed by SIMULATING
+    draw_coach_texts' exact per-entry step arithmetic (line_h advance +
+    n_lines*line_h + a 10px gap, matching _wrapped's own return-value
+    convention) rather than a separately-derived formula -- an earlier
+    version used a formula that looked right but silently underestimated by
+    30px per entry beyond the first (fine for 1 entry, a real ~70px
+    overflow at 3 -- caught by rendering a 3-wrong-word case and visually
+    inspecting it, not by reasoning about the arithmetic). Simulating the
+    same steps here means the two can't drift apart again."""
+    if not entries:
+        return 0
+    line_h = 30
+    y = 14  # relative to y_top -- matches draw_coach_texts' "y = y_top + 14"
+    for sign, text, _color in entries:
+        n = _wrapped_line_count(canvas, [_coach_line(sign, text)], 18, F_SMALL)
+        y = y + line_h + n * line_h + 10  # mirrors _wrapped(..., y + line_h, ...) + 10
+    return y
+
+
+def _coach_line(sign, text):
+    return text if sign is None else f"Coach ({sign}): {text}"
+
+
+def _fit_coach_entries(canvas, entries, max_h):
+    """Truncates `entries` to whatever fits within `max_h` of vertical
+    space, appending a "+N more" note (sign=None, rendered without the
+    "Coach (X):" prefix, muted color) for the rest -- every entry is ALSO
+    printed to the console regardless (see run_live_sentence), so nothing is
+    silently lost, just not all crammed onto one fixed-height canvas. Guards
+    against exactly the "content taller than the canvas" overflow class this
+    file's own history has hit before (see draw_verdict's docstring) -- with
+    coaching now covering every wrong word instead of just one, several
+    long LLM-phrased entries can genuinely add up past the available
+    height. `entries`: list of (sign, text, color)."""
+    if not entries:
+        return entries
+    kept = []
+    for sign, text, color in entries:
+        candidate = kept + [(sign, text, color)]
+        if _coach_texts_height(canvas, candidate) <= max_h:
+            kept = candidate
+        else:
+            remaining = len(entries) - len(kept)
+            note = f"+{remaining} more correction{'s' if remaining != 1 else ''} -- see terminal output"
+            if _coach_texts_height(canvas, kept + [(None, note, TEXT_MUTED)]) <= max_h:
+                kept.append((None, note, TEXT_MUTED))
+            break
+    return kept
+
+
+def draw_coach_texts(canvas, entries, y_top):
+    """Draws coaching for EVERY word with a real mistake, not just the
+    first -- a learner working through a whole sentence wants to know what
+    to fix on every word that needs it, not just whichever came first in
+    gloss order. `entries`: list of (sign, text, color) triples; each `text`
+    is already-computed coach_text/coach_text_maybe_llm output, same as
+    single-sign mode's single-entry draw_coach_text (`color` lets a
+    no-mistakes "great job" entry read as positive rather than looking like
+    another correction). Caller is responsible for pre-truncating via
+    `_fit_coach_entries` if space is limited -- this function just draws
+    whatever it's given."""
+    if not entries:
+        return y_top
+    band_h = _coach_texts_height(canvas, entries)
+    _panel_bg(canvas, y_top, y_top + band_h, color=BG_PANEL, alpha=0.94)
+    _divider(canvas, y_top)
+    line_h = 30
+    y = y_top + 14
+    for sign, text, color in entries:
+        y = _wrapped(canvas, [(_coach_line(sign, text), color)], 18, y + line_h, F_SMALL,
+                     line_h, thickness=2) + 10
     return y_top + band_h
 
 
@@ -518,56 +606,173 @@ def compose_canvas(ref_frame, live_frame, target_sign, phon_labels, result, stal
     return divider_canvas
 
 
-SENT_ROW_H = 44
+SENT_ROW_H = 52
+SENT_BADGE_H = 92  # taller than single-sign's BADGE_H -- the instruction line here is
+                    # the PRIMARY "what do I do right now" cue (see _sentence_step_hint),
+                    # so it gets the single-sign-mode-sized font, not the tiny sub-hint size
+
+# Sentence mode's own step-by-step instruction text, separate from
+# _CAPTURE_STATE_DISPLAY's hint (which single-sign mode also uses and is
+# already tuned for that flow) -- reusing it here would understate what's
+# actually a 2-step process (sign, THEN grade) a learner hasn't seen before.
+_SENTENCE_STEP_HINT = {
+    "idle": "STEP 1 -- sign the whole sentence in one continuous take",
+    "active": "STEP 1 -- keep signing, pause briefly once you're done",
+    "settled": "STEP 2 -- press [n] to grade your attempt",
+    "settled_graded": "Results below -- [c] to try again, or [n] to re-grade this attempt",
+}
 
 
-def draw_sentence_header(canvas, seq, capture_state):
-    """Sentence-mode analogue of draw_verdict's header + capture badge --
-    same layout convention (opaque panels, top-down), just with the target
-    text/gloss line instead of a single sign name."""
+def _sentence_controls(capture_state, graded):
+    """State-aware status-bar text for sentence mode -- [n] genuinely does
+    nothing until CAPTURED, so saying "[n]ext" (single-sign mode's accurate
+    but here-wrong default) or even a static "[n] Grade" the rest of the
+    time would mislead about when it's actionable."""
+    if capture_state != "settled":
+        return "[q]uit   [c]lear   [n] grade (finish signing first)"
+    if graded is None:
+        return "[q]uit   [c]lear   [n] Grade my attempt"
+    return "[q]uit   [c]lear to retry   [n] Grade again"
+
+
+def draw_sentence_header(canvas, seq, capture_state, graded):
+    """Sentence-mode analogue of draw_verdict's header + capture badge.
+    Unlike single-sign mode, the state hint here IS the primary instruction
+    (a learner hasn't seen this 2-step sign-then-grade flow before), so it's
+    drawn at F_BODY size, not F_TINY -- and the badge itself is taller
+    (SENT_BADGE_H) to fit it comfortably rather than cramming it in.
+    `graded` only affects which hint text is shown once CAPTURED -- "press
+    [n] to grade" would be stale/wrong once results are already on screen."""
     _panel_bg(canvas, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
     _text(canvas, f'TARGET SENTENCE   "{seq.english}"', 18, 40, F_HEADER, ACCENT, 2)
     _divider(canvas, HEADER_H)
 
     badge_top = HEADER_H
-    _panel_bg(canvas, badge_top, badge_top + BADGE_H, color=BG_HEADER, alpha=0.93)
-    label, color, hint = _CAPTURE_STATE_DISPLAY[capture_state]
+    _panel_bg(canvas, badge_top, badge_top + SENT_BADGE_H, color=BG_HEADER, alpha=0.93)
+    label, color, _ = _CAPTURE_STATE_DISPLAY[capture_state]
+    hint_key = "settled_graded" if (capture_state == "settled" and graded is not None) else capture_state
     cv2.circle(canvas, (32, badge_top + 30), 9, color, -1, cv2.LINE_AA)
-    _text(canvas, f"{label}   glosses: {' '.join(seq.gloss_ids)}", 54, badge_top + 38, F_BODY, color, 2)
-    _text(canvas, hint, 54, badge_top + 62, F_TINY, TEXT_MUTED)
-    _divider(canvas, badge_top + BADGE_H)
-    return badge_top + BADGE_H
+    _text(canvas, label, 54, badge_top + 38, F_BODY, color, 2)
+    _text(canvas, _SENTENCE_STEP_HINT[hint_key], 54, badge_top + 66, F_BODY, TEXT_PRIMARY, 2)
+    _text(canvas, f"glosses: {' '.join(seq.gloss_ids)}", 54, badge_top + 88, F_TINY, TEXT_MUTED)
+    _divider(canvas, badge_top + SENT_BADGE_H)
+    return badge_top + SENT_BADGE_H
+
+
+def _draw_check(canvas, cx, cy, color, r=9):
+    cv2.line(canvas, (cx - r, cy), (cx - r // 3, cy + r - 2), color, 3, cv2.LINE_AA)
+    cv2.line(canvas, (cx - r // 3, cy + r - 2), (cx + r, cy - r + 2), color, 3, cv2.LINE_AA)
+
+
+def _draw_x(canvas, cx, cy, color, r=8):
+    cv2.line(canvas, (cx - r, cy - r), (cx + r, cy + r), color, 3, cv2.LINE_AA)
+    cv2.line(canvas, (cx - r, cy + r), (cx + r, cy - r), color, 3, cv2.LINE_AA)
+
+
+SENT_RESULTS_HEADING_H = 40
+
+
+def _sentence_results_height(graded):
+    if graded is None:
+        return 0
+    return SENT_RESULTS_HEADING_H + SENT_ROW_H * len(graded) + 34
 
 
 def draw_sentence_results(canvas, content_top, graded):
-    """One compact row per gloss: how many of its judged parameters MATCHed,
-    plus fidelity. Deliberately a scoreboard, not draw_verdict's full
-    per-parameter detail view -- a multi-word sentence's 5-parameters-per-word
-    breakdown wouldn't fit on screen at once (see project_workflow.md's Phase
-    7 step 6 scoping); the coach-text band below still names the single most
-    useful correction, same "one thing at a time" philosophy as single-sign
-    mode."""
-    if graded is None:
-        _panel_bg(canvas, content_top, content_top + 50, color=BG_PANEL, alpha=0.94)
-        _text(canvas, "sign the whole sentence, then press [n] to grade", 20, content_top + 32,
-              F_SMALL, TEXT_MUTED)
-        return content_top + 50
-
-    content_h = 20 + SENT_ROW_H * len(graded)
+    """One row per gloss: a MATCH/OFF icon (not just color -- a shape reads
+    faster than parsing text, and doesn't rely on color perception alone),
+    plain-language "N of M correct" (not "matched", not raw ML jargon), and
+    a de-emphasized secondary "similarity" number (renamed from "fidelity" --
+    a real ML term, not something a learner should have to know) below the
+    headline count rather than crowding the same line. Deliberately a
+    scoreboard, not draw_verdict's full per-parameter detail view -- a
+    multi-word sentence's 5-parameters-per-word breakdown wouldn't fit on
+    screen at once (see project_workflow.md's Phase 7 step 6 scoping); a
+    footnote names what the 5 aspects actually are. Lives on the LEFT panel
+    (see draw_sentence_left_panel) once graded, freeing the right/live panel
+    almost entirely for the camera feed -- see that function's docstring for
+    why."""
+    w = canvas.shape[1]
+    content_h = _sentence_results_height(graded)
     _panel_bg(canvas, content_top, content_top + content_h, color=BG_PANEL, alpha=0.94)
-    y = content_top + 16
+    _text(canvas, "YOUR RESULTS", 18, content_top + 26, F_TINY, TEXT_MUTED, 1)
+    y = content_top + SENT_RESULTS_HEADING_H
     for g in graded:
         matched = sum(1 for v in g.result.parameters.values() if v.correct is True)
         judged = sum(1 for v in g.result.parameters.values() if v.correct is not None)
-        color = MATCH_COLOR if judged and matched == judged else OFF_COLOR
-        row = f"{g.target_sign:<14} {matched}/{judged} matched    fidelity {g.result.fidelity:.3f}"
-        _text(canvas, row, 20, y + 28, F_SMALL, color, 2)
+        all_correct = bool(judged) and matched == judged
+        color = MATCH_COLOR if all_correct else OFF_COLOR
+        icon_cy = y + 20
+        if all_correct:
+            _draw_check(canvas, 30, icon_cy, color)
+        else:
+            _draw_x(canvas, 30, icon_cy, color)
+        _text(canvas, g.target_sign, 54, y + 28, F_SMALL, TEXT_PRIMARY, 2)
+        summary = f"{matched} of {judged} correct"
+        (sw, _), _ = cv2.getTextSize(summary, FONT, F_SMALL, 2)
+        _text(canvas, summary, w - 30 - sw, y + 22, F_SMALL, color, 2)
+        sim = f"similarity {g.result.fidelity:.2f}"
+        (mw, _), _ = cv2.getTextSize(sim, FONT, F_TINY, 1)
+        _text(canvas, sim, w - 30 - mw, y + 44, F_TINY, TEXT_MUTED, 1)
         y += SENT_ROW_H
+    footnote = "each word is graded on 5 aspects: handshape, two location details, movement, repetition"
+    _text(canvas, footnote, 18, y + 20, F_TINY, TEXT_MUTED)
     return content_top + content_h
 
 
+def draw_sentence_reference_footer(canvas, y_top, band_h):
+    """Left-panel instruction footer, shown BEFORE grading -- sentence
+    mode's reference video had NO on-screen explanation of what it's for or
+    how the two panels relate, unlike single-sign mode's always-on
+    describe_sign footer. Fixed short text is enough here (no per-sentence
+    phonology to describe the way a single target sign has)."""
+    _panel_bg(canvas, y_top, y_top + band_h, color=BG_PANEL, alpha=0.94)
+    _text(canvas, "HOW TO USE THIS", 18, y_top + 26, F_TINY, TEXT_MUTED, 1)
+    _wrapped(canvas, [("Watch this looping reference (real signers, stitched together), "
+                        "then sign the same sentence in one continuous take on the right.",
+                        TEXT_PRIMARY)], 18, y_top + 58, F_SMALL, 28, thickness=2)
+
+
+def draw_sentence_left_panel(canvas, seq, graded, coach_entries):
+    """The left panel always shows the looping reference video behind a
+    header and a bottom band. BEFORE grading, that band explains how to use
+    the demo. AFTER grading, it becomes the results scoreboard + ALL
+    wrong-word coaching instead -- moved here from the right/live panel
+    specifically because real usage showed the live view getting crowded
+    out by its own feedback: with a 3-word scoreboard + coach text + status
+    bar all stacked on top of the camera feed, well over half the visible
+    live panel was opaque UI, not you. Putting results here means the RIGHT
+    panel drops to just a header + badge + status bar once graded --
+    freeing nearly the whole panel to actually show you signing, which
+    matters most exactly when you're comparing a retry against what you
+    just did."""
+    _panel_bg(canvas, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
+    _text(canvas, "REFERENCE (stitched clips)", 18, 40, F_HEADER, ACCENT, 2)
+    _divider(canvas, HEADER_H)
+
+    if graded is None:
+        footer_h = 100
+        footer_top = canvas.shape[0] - footer_h
+        draw_sentence_reference_footer(canvas, footer_top, footer_h)
+        return
+
+    # Never let the footer band squeeze the video below MIN_VIDEO_H, no matter
+    # how much coaching text there is -- with every wrong word now coached
+    # (not just one), several long LLM-phrased entries can genuinely add up
+    # past the canvas height; _fit_coach_entries truncates rather than
+    # overflowing (see its docstring).
+    MIN_VIDEO_H = 150
+    results_h = _sentence_results_height(graded)
+    coach_budget = max(0, canvas.shape[0] - HEADER_H - MIN_VIDEO_H - results_h)
+    coach_entries = _fit_coach_entries(canvas, coach_entries, coach_budget)
+    coach_h = _coach_texts_height(canvas, coach_entries)
+    band_top = canvas.shape[0] - results_h - coach_h
+    draw_sentence_results(canvas, band_top, graded)
+    draw_coach_texts(canvas, coach_entries, band_top + results_h)
+
+
 def compose_sentence_canvas(ref_frame, live_frame, seq, graded, capture_state, fps, ms,
-                             coach_text=None, coach_text_for=None, height=920):
+                             coach_entries=None, height=920):
     def fit(frame, fallback_w=460):
         if frame is None:
             return np.full((height, fallback_w, 3), 18, np.uint8)
@@ -578,14 +783,10 @@ def compose_sentence_canvas(ref_frame, live_frame, seq, graded, capture_state, f
     left = fit(ref_frame)
     right = fit(live_frame)
 
-    _panel_bg(left, 0, HEADER_H, color=BG_HEADER, alpha=0.96)
-    _text(left, "REFERENCE (stitched clips)", 18, 40, F_HEADER, ACCENT, 2)
-    _divider(left, HEADER_H)
+    draw_sentence_left_panel(left, seq, graded, coach_entries)
 
-    badge_bottom = draw_sentence_header(right, seq, capture_state)
-    content_bottom = draw_sentence_results(right, badge_bottom, graded)
-    coach_bottom = draw_coach_text(right, coach_text, coach_text_for, y_top=content_bottom)
-    draw_status_bar(right, coach_bottom, fps, ms)
+    badge_bottom = draw_sentence_header(right, seq, capture_state, graded)
+    draw_status_bar(right, badge_bottom, fps, ms, controls=_sentence_controls(capture_state, graded))
 
     divider_canvas = np.hstack([left, right])
     cv2.line(divider_canvas, (left.shape[1], 0), (left.shape[1], height), DIVIDER, 2, cv2.LINE_AA)
@@ -801,7 +1002,7 @@ def run_live_sentence(args):
                              settle_frames=args.sentence_settle_frames, preroll=args.preroll,
                              max_frames=args.sentence_capture_max)
     win_lock = threading.Lock()
-    state = {"graded": None, "coach_text": None, "coach_text_for": None}
+    state = {"graded": None, "coach_entries": None}
 
     print(f"opening camera {args.camera} in LIVE mode (extractor {args.extractor}"
           f"{', gpu' if args.gpu else ''}) ...")
@@ -834,8 +1035,7 @@ def run_live_sentence(args):
 
             ref_frame = ref.next_frame()
             canvas = compose_sentence_canvas(ref_frame, live_canvas, seq, state["graded"], capture_state,
-                                              fps, 0.0, coach_text=state["coach_text"],
-                                              coach_text_for=state["coach_text_for"])
+                                              fps, 0.0, coach_entries=state["coach_entries"])
             cv2.imshow("ASL diagnose demo -- sentence mode", canvas)
 
             key = cv2.waitKey(1) & 0xFF
@@ -858,18 +1058,24 @@ def run_live_sentence(args):
                         mastery.update(g.target_sign, correct_by_parameter)
                     mastery.save(args.mastery_path)
 
-                    # coach the FIRST segment with a real mistake -- one correction
-                    # at a time, same philosophy as single-sign mode's coach_text
-                    worst = next((g for g in graded if focus_parameter(g.result.parameters) is not None), None)
-                    if worst is not None:
-                        text = coach_text_maybe_llm(worst.target_sign, worst.result.parameters,
-                                                     use_llm=args.llm_feedback)
-                        state["coach_text"] = text
-                        state["coach_text_for"] = worst.target_sign
-                        print(f"  [{worst.target_sign}] {text}")
-                    else:
-                        state["coach_text"] = "Great job -- every judged parameter matched across the sentence."
-                        state["coach_text_for"] = seq.english
+                    # Coach EVERY word with a real mistake, not just the first -- a
+                    # learner working through a whole sentence wants to know what to
+                    # fix on each word that needs it. Still "one correction at a time"
+                    # PER WORD (focus_parameter picks that word's single most-
+                    # confidently-wrong parameter), just no longer capped at one word
+                    # total.
+                    entries = []
+                    for g in graded:
+                        if focus_parameter(g.result.parameters) is not None:
+                            text = coach_text_maybe_llm(g.target_sign, g.result.parameters,
+                                                         use_llm=args.llm_feedback)
+                            entries.append((g.target_sign, text, COACH_COLOR))
+                            print(f"  [{g.target_sign}] {text}")
+                    if not entries:
+                        text = "Great job -- every judged parameter matched across the sentence."
+                        entries = [(None, text, MATCH_COLOR)]
+                        print(f"  {text}")
+                    state["coach_entries"] = entries
                     for g in graded:
                         print(f"  {g.target_sign:<14} frames {g.frame_range}  fidelity {g.result.fidelity:.3f}")
 

@@ -1519,6 +1519,118 @@ no live-UI work until the algorithm is proven on data that already exists):**
    post-grade states — confirmed no layout bugs (panels touch edge-to-edge,
    no overlap, top-down flow holds through the new scoreboard section too).
 
+   **Redesigned after real (first-ever live) usage exposed exactly what a
+   canvas render against synthetic noise can't catch: a workflow nobody's
+   used before is confusing even with a technically-correct layout.** User
+   feedback after actually running `--sentence`: didn't understand how to
+   use it. Root causes, found by re-reading the code rather than guessing:
+   (1) the status bar's control hint was single-sign mode's UNCHANGED
+   `"[n]ext"` — actively wrong in sentence mode, where `[n]` grades and does
+   nothing at all until CAPTURED; (2) the only instruction was a small
+   `F_TINY` sub-hint easy to miss, for a 2-step (sign, then grade) flow a
+   learner has never seen before, unlike single-sign mode's familiar
+   single-action loop; (3) the results scoreboard leaned on raw ML
+   vocabulary ("fidelity") and bare colored text with no iconography,
+   forcing the reader to parse numbers instead of glance-reading a result;
+   (4) the left reference panel had zero on-screen explanation of what it
+   even was. Fixed all four, not just the one bug found first:
+   - `draw_status_bar` gained an optional `controls` param (default =
+     single-sign mode's exact original string, zero behavior change there);
+     sentence mode's `_sentence_controls()` builds a STATE-AWARE string —
+     `"[n] grade (finish signing first)"` while capturing, `"[n] Grade my
+     attempt"` once CAPTURED, `"[c]lear to retry   [n] Grade again"` after
+     grading.
+   - `_SENTENCE_STEP_HINT` (separate from `_CAPTURE_STATE_DISPLAY`'s hint
+     dict, which single-sign mode also uses and was already tuned for that
+     flow) gives sentence mode explicit "STEP 1 -- sign..." / "STEP 2 --
+     press [n]..." copy, drawn at `F_BODY` size (matching single-sign mode's
+     own primary-instruction weight) in a taller `SENT_BADGE_H` badge, not
+     crammed into the old tiny sub-hint; once actually graded, the hint
+     switches to a `"settled_graded"` variant ("Results below...") instead
+     of stale "press [n] to grade" text sitting above results already on
+     screen.
+   - `draw_sentence_results` rewritten: a real checkmark/X icon per word
+     (`_draw_check`/`_draw_x`, drawn as vector line segments — HERSHEY fonts
+     don't reliably render ✓/✗ glyphs) instead of relying on color alone,
+     plain "N of M correct" instead of "matched," the fidelity number
+     renamed "similarity" and demoted to a smaller muted secondary line
+     under the headline count rather than crowding it, and a footnote
+     spelling out what the 5 graded aspects actually are (a learner
+     shouldn't have to already know "handshape/major_location/..." to read
+     the count).
+   - New `draw_sentence_reference_footer` gives the left panel the
+     always-on "HOW TO USE THIS" explanation single-sign mode's
+     `describe_sign` footer already provides, that sentence mode never had.
+
+   Verified the same way as every prior UI pass in this file: rendered
+   `compose_sentence_canvas` against synthetic noise across all four states
+   (idle, active, settled-ungraded, graded-with-coach-text) and visually
+   inspected each — confirmed no overflow from the longer state-aware
+   hint/control strings, no overlap, panels still edge-to-edge. `--selftest
+   --sentence "I want water."` re-run to confirm the wiring (unaffected --
+   this pass was drawing-only) still works end to end. Full suite unaffected
+   (script-only change): **336 passed / 10 skipped.**
+
+   **Layout redesign — real live usage (a real camera, this time) found two
+   more real problems the previous pass's synthetic-noise checks structurally
+   couldn't catch: those checks exercise DRAWING correctness, not whether the
+   drawn thing is a good use of the screen.** User feedback after actually
+   using it live: wanted to see themselves more clearly, and wanted coaching
+   on EVERY wrong word, not just the first.
+   - **"See myself more clearly"**: with the right/live panel carrying
+     header + badge + a 3-word scoreboard + coach text + status bar all
+     stacked on top of the camera feed, well over half of it was opaque UI,
+     not camera. Fixed by moving the results scoreboard and coaching
+     entirely onto the LEFT (reference) panel, drawn as a bottom band below
+     the looping video instead — the right panel now carries only header +
+     badge + status bar once graded, freeing nearly the whole panel for the
+     live view (the underlying draw functions, `draw_sentence_results`/
+     `draw_coach_texts`, are unchanged in how they draw — only WHICH canvas
+     they're called on moved).
+   - **"Coach me on every wrong word"**: `[n]`'s handler used to coach only
+     `next(g for g in graded if focus_parameter(...))` — the first mistake
+     in gloss order, silently dropping the rest. Now loops over every
+     segment with a real mistake and coaches each (still "one correction
+     per WORD" — `focus_parameter` still picks that word's single most-
+     confidently-wrong parameter — just no longer capped at one word
+     total). `draw_coach_text` (singular, single-sign mode, UNCHANGED) got
+     a sibling `draw_coach_texts` (plural) that stacks one band per
+     mistake; entries are now `(sign, text, color)` triples so a
+     no-mistakes "Great job" entry can render in green without an odd
+     "Coach (I want water.):" prefix, instead of forcing every message
+     through the same "Coach (X):" phrasing.
+   - **A real overflow bug found BY rendering the new layout, not assumed
+     away**: with all 3 words wrong and long LLM-length coach text each,
+     the third entry ran off the bottom of the canvas. Root cause: the
+     first version of `_coach_texts_height`'s formula didn't match
+     `draw_coach_texts`'s actual per-entry step arithmetic (which advances
+     by a full `line_h` *before* each entry, not only between entries) --
+     correct for exactly 1 entry (matching single-sign mode's original
+     `_coach_text_height`, which is where the formula was copied from), a
+     30px-per-entry underestimate for every entry after the first — invisible
+     at 1 entry, a real ~70px shortfall at 3. Fixed by rewriting the height
+     function to SIMULATE the exact same stepping arithmetic the drawing
+     loop uses, rather than a separately-derived formula that can silently
+     drift from what's actually drawn — this is the same class of bug
+     `draw_verdict`'s own docstring already warns about (fixed-offset
+     layout assumptions breaking when content is taller than assumed), just
+     inside a height *formula* this time instead of a fixed pixel offset.
+     Also added `_fit_coach_entries`: even with a correct height formula,
+     enough wrong words with long enough LLM-phrased text could still
+     exceed the canvas, so entries are truncated to whatever fits within a
+     computed budget (never letting the video shrink below `MIN_VIDEO_H`),
+     with a "+N more corrections -- see terminal output" note for the rest
+     — every entry is printed to the console regardless, so truncation
+     never actually loses information, just screen space.
+
+   Verified by rendering all three post-grade states against synthetic
+   noise — normal (1 wrong word), a deliberately adversarial worst case (all
+   3 words wrong, long stress-test coach text on each), and all-correct —
+   and visually inspecting each; the worst case is what caught the overflow
+   bug above. `--selftest --sentence` and the full suite re-confirmed
+   afterward. Full suite: **336 passed / 10 skipped** (drawing/layout-only
+   change).
+
 **Deliberately still out of scope even once this ships:** genuine free
 continuous signing with real coarticulation (this always grades an attempt at
 a system-known target sentence, never open translation — consistent with
