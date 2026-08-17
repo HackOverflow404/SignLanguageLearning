@@ -47,10 +47,10 @@ using each target's word, gloss-composed and accepted by the fail-closed rule
 engine before ever being displayed (aslcv.generator.sentence_prompts) --
 presentational only, still not graded (continuous-sentence grading is Phase 7).
 
-    .venv/bin/python scripts/diagnose_demo.py                       # mediapipe, adaptive over the default pool
-    .venv/bin/python scripts/diagnose_demo.py --target father        # start on father, [n] still adapts onward
-    .venv/bin/python scripts/diagnose_demo.py --targets you,me,water
-    .venv/bin/python scripts/diagnose_demo.py --sentence-prompts     # + LLM example sentences per target
+    .venv/bin/python scripts/diagnose_demo.py --gpu                  # adaptive over the default pool
+    .venv/bin/python scripts/diagnose_demo.py --gpu --target father  # start on father, [n] still adapts onward
+    .venv/bin/python scripts/diagnose_demo.py --gpu --targets you,me,water
+    .venv/bin/python scripts/diagnose_demo.py --gpu --sentence-prompts  # + LLM example sentences per target
     .venv/bin/python scripts/diagnose_demo.py --selftest             # no camera: verify the whole path offline
 
 Phase 7 -- SENTENCE MODE (`--sentence`): grades a full sentence via forced
@@ -94,15 +94,29 @@ from aslcv.grading.embedding_grader import EmbeddingGrader
 from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 from aslcv.learner.mastery import MasteryState
 from aslcv.learner.scheduler import find_minimal_pairs, pick_next
-from aslcv.pipeline_config import add_pipeline_args, build_pipeline
 from aslcv.production import GlossRuleEngine, fetch_sequence
 from live_demo import _poses_from_npz, build_extractor  # reuse, don't rebuild
 
 REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "data" / "manifest.csv"
 DEFAULT_CHECKPOINT = REPO / "models" / "embedding_grader"
-DEFAULT_MASTERY_PATH = REPO / "data" / "learner_state.json"
+MASTERY_PATH = REPO / "data" / "learner_state.json"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+# Live-capture tuning. Not CLI-exposed -- these were arrived at deliberately
+# (PREROLL/SETTLE_FRAMES specifically MUST match embedding_dataset.py's
+# LIVE_PREROLL/LIVE_SETTLE_FRAMES, since the grader is now trained on that
+# exact framing -- see project_workflow.md's Phase 4 grader-accuracy
+# investigation), not knobs a session should need to retune. Edit here, not
+# via a flag, if they ever need to change.
+MIN_FRAMES = 20          # frames needed before grading starts
+PREROLL = LIVE_PREROLL   # rest frames kept before motion starts
+SETTLE_FRAMES = LIVE_SETTLE_FRAMES  # consecutive low-motion frames marking CAPTURED
+CAPTURE_MAX = 150        # single-sign safety cap (frames)
+SENTENCE_SETTLE_FRAMES = 30  # larger than SETTLE_FRAMES: a multi-sign attempt has
+                              # several motion rises with brief pauses that must NOT
+                              # read as the end of the attempt (Phase 7 step 5)
+SENTENCE_CAPTURE_MAX = 400   # sized for several signs' worth of frames, not one
 
 # A small, phonologically clear starting set -- includes the curriculum's built-in
 # mother/father minimal pair (differ ONLY in minor_location). [n] cycles this list;
@@ -287,41 +301,6 @@ def resolve_sentence(args, grader):
     except ValueError as exc:
         raise SystemExit(f"cannot resolve reference clips for this sentence: {exc}")
     return seq, composed_video
-
-
-# ------------------------------------------------------------- config verification --
-
-_PIPELINE_FIELDS = ("face", "legs_feet", "confidence", "binary_threshold", "velocity",
-                    "depth_proxies", "trim_to_motion", "motion_threshold", "motion_pad_frames")
-
-
-def verify_pipeline_matches_checkpoint(args, grader, skeleton):
-    """Build the live-side FeaturePipeline from CLI flags (prints the resolved config,
-    same as every other script routes through pipeline_config.py) and refuse to start
-    if it differs from the checkpoint's own TRAINING-TIME config in any field. A silent
-    mismatch here would corrupt every verdict without any visible symptom -- fail
-    closed instead of guessing."""
-    live_pipeline = build_pipeline(args, skeleton, extractor_name=args.extractor)
-    saved = grader.pipeline
-
-    mismatches = []
-    if args.extractor != grader.extractor:
-        mismatches.append(f"extractor: live={args.extractor!r} checkpoint={grader.extractor!r}")
-    for field in _PIPELINE_FIELDS:
-        lv, sv = getattr(live_pipeline, field), getattr(saved, field)
-        if lv != sv:
-            mismatches.append(f"{field}: live={lv} checkpoint={sv}")
-    if live_pipeline.normalizer.local_hand != saved.normalizer.local_hand:
-        mismatches.append(f"local_hand: live={live_pipeline.normalizer.local_hand} "
-                           f"checkpoint={saved.normalizer.local_hand}")
-
-    if mismatches:
-        raise SystemExit(
-            "REFUSING TO START: live feature pipeline does not match this checkpoint's "
-            "training-time config -- every verdict would silently be wrong.\n  "
-            + "\n  ".join(mismatches)
-            + "\nDrop the overriding flag(s), or point --checkpoint at a model trained with this config.")
-    print("verified: live pipeline config matches the checkpoint's training-time config.")
 
 
 # ---------------------------------------------------------------------- overlay ----
@@ -797,10 +776,11 @@ def compose_sentence_canvas(ref_frame, live_frame, seq, graded, capture_state, f
 # ------------------------------------------------------------------------ live ----
 
 def run_live(args):
+    # The pipeline always comes from the checkpoint (grader.pipeline) -- there is
+    # no separately-built "live" pipeline to accidentally mismatch, so there's
+    # nothing here to verify against a CLI flag.
     grader = EmbeddingGrader.build(args.checkpoint, which=args.which)
-    args.extractor = args.extractor or grader.extractor
-    skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
-    verify_pipeline_matches_checkpoint(args, grader, skeleton)
+    skeleton = MEDIAPIPE_HOLISTIC if grader.extractor == "mediapipe" else COCO_WHOLEBODY
 
     rows = manifest_rows()
     cycle = resolve_targets(args, rows, grader)
@@ -813,7 +793,7 @@ def run_live(args):
     # minimal pairs available for contrastive drills WITHIN this pool -- both
     # scoped to `pool_signs` since a contrastive pick must itself be a resolvable
     # target (already fail-closed-validated above to have a reference clip).
-    mastery = MasteryState.load(args.mastery_path)
+    mastery = MasteryState.load(MASTERY_PATH)
     phon_labels = PhonologyLabels()
     minimal_pairs = find_minimal_pairs(phon_labels, pool_signs)
 
@@ -846,8 +826,8 @@ def run_live(args):
     # of silently truncating a slow signer's attempt -- see module docstring.
     energy_fn = functools.partial(hand_motion_energy, grader.pipeline.normalizer, skeleton)
     capture = CaptureBuffer(energy_fn, motion_threshold=grader.pipeline.motion_threshold,
-                             settle_frames=args.settle_frames, preroll=args.preroll,
-                             max_frames=args.capture_max)
+                             settle_frames=SETTLE_FRAMES, preroll=PREROLL,
+                             max_frames=CAPTURE_MAX)
     win_lock = threading.Lock()
     shared = {"result": None, "ms": 0.0, "stale": False}
     res_lock = threading.Lock()
@@ -858,7 +838,7 @@ def run_live(args):
             with win_lock:
                 snap = list(capture.frames)
                 capture_state = capture.state
-            if capture_state == "idle" or len(snap) < args.min_frames:
+            if capture_state == "idle" or len(snap) < MIN_FRAMES:
                 time.sleep(0.03)
                 continue
             with res_lock:
@@ -875,9 +855,9 @@ def run_live(args):
                     shared["stale"] = False
                 shared["ms"] = (time.time() - t0) * 1000.0
 
-    print(f"opening camera {args.camera} in LIVE mode (extractor {args.extractor}"
+    print(f"opening camera {args.camera} in LIVE mode (extractor {grader.extractor}"
           f"{', gpu' if args.gpu else ''}) ...")
-    extractor, _ = build_extractor(args.extractor, RunningMode.LIVE, gpu=args.gpu)
+    extractor, _ = build_extractor(grader.extractor, RunningMode.LIVE, gpu=args.gpu)
     k = len(skeleton.names)
     zero_pose = lambda: Pose(np.zeros((k, 2), np.float32), np.zeros(k, np.float32))
 
@@ -904,7 +884,7 @@ def run_live(args):
                 capture_state = capture.state
 
             live_canvas = extractor.draw(frame, pose) if pose is not None else frame.copy()
-            if args.mirror:
+            if not args.no_mirror:
                 live_canvas = cv2.flip(live_canvas, 1)  # display-only selfie flip
 
             ref_frame = ref.next_frame()
@@ -935,7 +915,7 @@ def run_live(args):
                 if result is not None and not stale:
                     correct_by_parameter = {p: v.correct for p, v in result.parameters.items()}
                     mastery.update(state["target"], correct_by_parameter)
-                    mastery.save(args.mastery_path)
+                    mastery.save(MASTERY_PATH)
                     text = coach_text_maybe_llm(state["target"], result.parameters, use_llm=args.llm_feedback)
                     print(f"  [{state['target']}] {text}")
                     state["coach_text"] = text
@@ -985,29 +965,27 @@ def run_live_sentence(args):
     feature than Phase 7's 6-step scope covers (see project_workflow.md) --
     single-sign mode's scheduler is unaffected and untouched by this."""
     grader = EmbeddingGrader.build(args.checkpoint, which=args.which)
-    args.extractor = args.extractor or grader.extractor
-    skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
-    verify_pipeline_matches_checkpoint(args, grader, skeleton)
+    skeleton = MEDIAPIPE_HOLISTIC if grader.extractor == "mediapipe" else COCO_WHOLEBODY
 
     seq, composed_video = resolve_sentence(args, grader)
     print(f'target sentence: "{seq.english}" -> {" ".join(seq.gloss_ids)}')
     print(DISCLAIMER)
 
-    mastery = MasteryState.load(args.mastery_path)
+    mastery = MasteryState.load(MASTERY_PATH)
 
     ref = ReferenceLoop()
     ref.set_target(seq.english, "composed", composed_video.frames)
 
     energy_fn = functools.partial(hand_motion_energy, grader.pipeline.normalizer, skeleton)
     capture = CaptureBuffer(energy_fn, motion_threshold=grader.pipeline.motion_threshold,
-                             settle_frames=args.sentence_settle_frames, preroll=args.preroll,
-                             max_frames=args.sentence_capture_max)
+                             settle_frames=SENTENCE_SETTLE_FRAMES, preroll=PREROLL,
+                             max_frames=SENTENCE_CAPTURE_MAX)
     win_lock = threading.Lock()
     state = {"graded": None, "coach_entries": None}
 
-    print(f"opening camera {args.camera} in LIVE mode (extractor {args.extractor}"
+    print(f"opening camera {args.camera} in LIVE mode (extractor {grader.extractor}"
           f"{', gpu' if args.gpu else ''}) ...")
-    extractor, _ = build_extractor(args.extractor, RunningMode.LIVE, gpu=args.gpu)
+    extractor, _ = build_extractor(grader.extractor, RunningMode.LIVE, gpu=args.gpu)
     k = len(skeleton.names)
     zero_pose = lambda: Pose(np.zeros((k, 2), np.float32), np.zeros(k, np.float32))
 
@@ -1031,7 +1009,7 @@ def run_live_sentence(args):
                 snap = list(capture.frames)
 
             live_canvas = extractor.draw(frame, pose) if pose is not None else frame.copy()
-            if args.mirror:
+            if not args.no_mirror:
                 live_canvas = cv2.flip(live_canvas, 1)  # display-only selfie flip
 
             ref_frame = ref.next_frame()
@@ -1057,7 +1035,7 @@ def run_live_sentence(args):
                     for g in graded:
                         correct_by_parameter = {p: v.correct for p, v in g.result.parameters.items()}
                         mastery.update(g.target_sign, correct_by_parameter)
-                    mastery.save(args.mastery_path)
+                    mastery.save(MASTERY_PATH)
 
                     # Coach EVERY word with a real mistake, not just the first -- a
                     # learner working through a whole sentence wants to know what to
@@ -1103,9 +1081,7 @@ def run_selftest(args):
     so a representative offline check needs to match it, not just grab the last N
     frames of the full raw clip."""
     grader = EmbeddingGrader.build(args.checkpoint, which=args.which)
-    args.extractor = args.extractor or grader.extractor
-    skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
-    verify_pipeline_matches_checkpoint(args, grader, skeleton)
+    skeleton = MEDIAPIPE_HOLISTIC if grader.extractor == "mediapipe" else COCO_WHOLEBODY
 
     rows = manifest_rows()
     val_by_sign = defaultdict(list)
@@ -1180,38 +1156,17 @@ def main():
     ap.add_argument("--target", default=None, help="starting target sign; [n] still cycles onward from here")
     ap.add_argument("--targets", default=None, help="comma-separated cycle list (default: a curated set incl. mother/father)")
     ap.add_argument("--camera", type=int, default=0, help="cv2 VideoCapture index")
-    ap.add_argument("--min-frames", type=int, default=20, help="frames needed before grading starts")
-    ap.add_argument("--settle-frames", type=int, default=8,
-                    help="live capture: consecutive low-motion frames that mark an attempt CAPTURED")
-    ap.add_argument("--preroll", type=int, default=12,
-                    help="live capture: rest frames kept before motion starts (natural clip lead-in)")
-    ap.add_argument("--capture-max", type=int, default=150,
-                    help="live capture: safety cap (frames) so a stuck/very slow attempt can't grow forever")
     ap.add_argument("--sentence", default=None,
                     help="Phase 7: switch to sentence mode -- grade a full sentence (e.g. "
                          "'I want water.') via forced alignment instead of one isolated sign. "
                          "Refused (SystemExit) if the gloss engine rejects it as out of scope or "
                          "any word lacks a cached reference clip.")
-    ap.add_argument("--sentence-settle-frames", type=int, default=30,
-                    help="--sentence only: larger than --settle-frames' single-sign default since "
-                         "a multi-sign attempt has several motion rises with brief pauses between "
-                         "words that must NOT be misread as the end of the attempt (see "
-                         "project_workflow.md's Phase 7 step 5 -- tuned conservatively, not "
-                         "validated against a real camera in this environment)")
-    ap.add_argument("--sentence-capture-max", type=int, default=400,
-                    help="--sentence only: safety cap sized for several signs' worth of frames, "
-                         "not one (same untuned-conservative caveat as --sentence-settle-frames)")
-    ap.add_argument("--mirror", dest="mirror", action="store_true", default=True,
-                    help="selfie-mirror the DISPLAY only (default on; grading uses the raw frame)")
-    ap.add_argument("--no-mirror", dest="mirror", action="store_false")
-    ap.add_argument("--extractor", default=None,
-                    help="override for verification only -- must match the checkpoint's own "
-                         "extractor or the demo refuses to start (default: the checkpoint's own)")
+    ap.add_argument("--no-mirror", action="store_true",
+                    help="disable the selfie-mirrored DISPLAY (default: mirrored; grading always "
+                         "uses the raw, unmirrored frame either way)")
     ap.add_argument("--gpu", action="store_true",
                     help="mediapipe only: request the GPU delegate (~3.3x faster, measured; "
                          "falls back to CPU automatically if unavailable on this machine)")
-    ap.add_argument("--mastery-path", type=Path, default=DEFAULT_MASTERY_PATH,
-                    help="Phase 6 learner-state JSON (persists across sessions; missing file = fresh learner)")
     ap.add_argument("--llm-feedback", action="store_true",
                     help="phrase [n]'s coaching line via HuggingFace's hosted Inference API "
                          "(needs HF_TOKEN set) instead of the templated text; falls back to "
@@ -1223,7 +1178,6 @@ def main():
                          "silently skipped on any missing token/network/API failure or if the "
                          "rule engine refuses every attempt")
     ap.add_argument("--selftest", action="store_true", help="no camera: verify the whole path on cached val clips")
-    add_pipeline_args(ap)
     args = ap.parse_args()
 
     if args.selftest:

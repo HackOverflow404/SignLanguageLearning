@@ -1716,6 +1716,46 @@ no live-UI work until the algorithm is proven on data that already exists):**
    afterward. Full suite: **336 passed / 10 skipped** (drawing/layout-only
    change).
 
+   **CLI surface simplified — 31 flags down to 13, no behavior change.**
+   User feedback: `diagnose_demo.py` "has way too many options and is
+   complex." Investigated rather than guessing which to cut: most of the
+   surface (10 flags) came from `add_pipeline_args`, the shared pipeline-
+   ablation block `live_demo.py`/`eval_slice.py`/`eval_minimal_pairs.py`
+   also use — and in THIS script they turned out to be pure dead weight.
+   Grading has always used `grader.pipeline` (loaded straight from the
+   checkpoint); the CLI-built pipeline `verify_pipeline_matches_checkpoint`
+   constructed from those flags was never fed into any actual grading call,
+   only compared against `grader.pipeline` to print a warning if they
+   differed. Same for `--extractor`: any value other than the checkpoint's
+   own already just triggered a refusal, so it never customized anything
+   either. Removed both, plus the whole verification function — there is no
+   longer a second pipeline-construction path to accidentally mismatch, so
+   there's nothing left to verify. **`live_demo.py` was deliberately left
+   untouched**: it's the Phase 2 DTW baseline with no saved checkpoint to
+   fall back on, so its pipeline flags are genuinely load-bearing there
+   (what you pass is what gets used), and it's the shared ablation harness
+   Phase 3's backend comparisons ran through — cutting it would remove real
+   research capability for no UX benefit, since it isn't the script anyone
+   runs interactively.
+
+   Also folded the rarely-touched tuning knobs (`--min-frames`,
+   `--settle-frames`/`--preroll`/`--capture-max` and their `--sentence-*`
+   duplicates, `--mastery-path`) into fixed module-level constants —
+   `PREROLL`/`SETTLE_FRAMES` now literally ARE
+   `embedding_dataset.LIVE_PREROLL`/`LIVE_SETTLE_FRAMES` (the same import,
+   not a separately-typed matching value), making the "these two must agree
+   with what the grader was trained on" invariant impossible to drift
+   instead of just documented. Collapsed the redundant `--mirror`
+   (default-on, so it never did anything) / `--no-mirror` pair into a single
+   `--no-mirror` flag. What's left is only what someone actually types:
+   `--checkpoint`/`--which`, `--target`/`--targets`, `--camera`,
+   `--sentence`, `--gpu`, `--llm-feedback`, `--sentence-prompts`,
+   `--selftest`, `--no-mirror`.
+
+   Verified behavior-identical, not just "looks the same": `--selftest`
+   (both single-sign and `--sentence`) produces byte-identical output
+   before/after the cut. Full suite: **339 passed / 10 skipped.**
+
 **Deliberately still out of scope even once this ships:** genuine free
 continuous signing with real coarticulation (this always grades an attempt at
 a system-known target sentence, never open translation — consistent with
