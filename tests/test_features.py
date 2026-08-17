@@ -11,7 +11,8 @@ import numpy as np
 from aslcv.extractor.base import Pose
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
-from aslcv.features import FeaturePipeline, Standardizer, hand_motion_energy, motion_active_span, to_fixed_length
+from aslcv.features import (FeaturePipeline, Standardizer, hand_motion_energy, live_capture_span,
+                             motion_active_span, to_fixed_length)
 from aslcv.normalizer.shoulder import ShoulderNormalizer, _hand_point_indices
 
 REPO = Path(__file__).resolve().parents[1]
@@ -112,6 +113,36 @@ def test_motion_active_span_never_trims_to_empty():
     energy = np.array([0.01, 0.02, 0.015, 0.01], dtype=np.float32)
     start, stop = motion_active_span(energy, threshold=1.0, pad_frames=0)
     assert (start, stop) == (0, len(energy))
+
+
+def test_live_capture_span_adds_preroll_and_settle_margins():
+    # active span [10, 20); preroll=3 before, settle=5 after
+    energy = np.zeros(40, dtype=np.float32)
+    energy[10:20] = 1.0
+    start, stop = live_capture_span(energy, threshold=0.5, preroll=3, settle_frames=5)
+    assert (start, stop) == (7, 25)
+
+
+def test_live_capture_span_clips_to_valid_range():
+    # active span starts near frame 0 and ends near the last frame -- preroll/
+    # settle must not push start negative or stop past len(energy)
+    energy = np.zeros(15, dtype=np.float32)
+    energy[1:14] = 1.0
+    start, stop = live_capture_span(energy, threshold=0.5, preroll=12, settle_frames=8)
+    assert start == 0
+    assert stop == 15
+
+
+def test_live_capture_span_keeps_much_less_rest_than_the_full_clip():
+    """The actual property this function exists to guarantee: for a clip
+    with a LOT of rest padding (like real ASL Citizen clips), the live-shaped
+    span is a much smaller slice of the total than the full clip -- this is
+    the real, measured train/serve mismatch being closed (see
+    project_workflow.md's Phase 4 grader-accuracy investigation)."""
+    energy = np.zeros(170, dtype=np.float32)  # e.g. "milk": 64 lead + 40 active + 66 trail
+    energy[64:104] = 1.0
+    start, stop = live_capture_span(energy, threshold=0.5, preroll=12, settle_frames=8)
+    assert (start, stop) == (52, 112)  # 60 frames, vs. the full clip's 170
 
 
 def test_trim_to_motion_off_by_default():

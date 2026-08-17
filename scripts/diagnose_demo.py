@@ -35,7 +35,7 @@ HONEST LIMITS (also shown on screen, every frame): this confirms the plumbing an
 lets you practice imitating a real reference clip. It does NOT independently verify
 ASL correctness -- "all correct" means "matched the reference," not "fluent," and the
 underlying model's own measured accuracy (PHASE4_REPORT.md) is well short of perfect
-(handshape 80.7%, repeated_movement 82.1% on held-out val clips) -- a wrong verdict is
+(movement 82.3%, minor_location 85.3% on held-out val clips) -- a wrong verdict is
 often the model, not you. A target with no cached reference clip is refused outright
 (fail-closed), never graded without something on screen to imitate.
 
@@ -73,7 +73,7 @@ import functools
 import textwrap
 import threading
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from pathlib import Path
 
 import cv2
@@ -83,12 +83,13 @@ from aslcv.capture import CaptureBuffer
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
 from aslcv.extractor.mediapipe import MEDIAPIPE_HOLISTIC
-from aslcv.features import hand_motion_energy
+from aslcv.features import hand_motion_energy, live_capture_span
 from aslcv.generator.feedback import focus_parameter, readable_value
 from aslcv.generator.llm_feedback import coach_text_maybe_llm
 from aslcv.generator.sentence_prompts import sentence_prompt_maybe_llm
 from aslcv.generator.sign_description import describe_sign
 from aslcv.grading.alignment import align_and_grade
+from aslcv.grading.embedding_dataset import LIVE_PREROLL, LIVE_SETTLE_FRAMES
 from aslcv.grading.embedding_grader import EmbeddingGrader
 from aslcv.grading.phonology_labels import ALL_PARAMETERS, PhonologyLabels
 from aslcv.learner.mastery import MasteryState
@@ -1094,9 +1095,13 @@ def run_live_sentence(args):
 def run_selftest(args):
     """No camera: push cached val clips' frames through the SAME grade_against_poses
     -> verdict path the live loop uses, so the wiring (and the headline mother/father
-    head-independence behavior) is verifiable offline. Uses a plain trailing window
-    (args.window) over the already-complete cached clip -- CaptureBuffer's motion
-    state machine is a live-capture concern, exercised only by the real camera path."""
+    head-independence behavior) is verifiable offline. Emulates what CaptureBuffer
+    would actually capture live (features.live_capture_span, the SAME approximation
+    embedding_dataset.py trims training clips to -- LIVE_PREROLL/LIVE_SETTLE_FRAMES)
+    rather than a plain trailing window: the model is now trained specifically on
+    that framing (see project_workflow.md's Phase 4 grader-accuracy investigation),
+    so a representative offline check needs to match it, not just grab the last N
+    frames of the full raw clip."""
     grader = EmbeddingGrader.build(args.checkpoint, which=args.which)
     args.extractor = args.extractor or grader.extractor
     skeleton = MEDIAPIPE_HOLISTIC if args.extractor == "mediapipe" else COCO_WHOLEBODY
@@ -1111,7 +1116,11 @@ def run_selftest(args):
 
     def emulate(row):
         npz = cache_dir / f"{row['video_id']}.npz"
-        return list(deque(_poses_from_npz(npz), maxlen=args.window))
+        poses = list(_poses_from_npz(npz))
+        energy = hand_motion_energy(grader.pipeline.normalizer, skeleton, poses)
+        start, stop = live_capture_span(energy, grader.pipeline.motion_threshold,
+                                         LIVE_PREROLL, LIVE_SETTLE_FRAMES)
+        return poses[start:stop]
 
     def print_result(true_sign, target_sign, result):
         parts = []
@@ -1123,7 +1132,7 @@ def run_selftest(args):
               f"fidelity={result.fidelity:.3f}  {' '.join(parts)}")
 
     print(f"\nselftest: prompt -> grade_against_poses -> verdict path, no camera "
-          f"(trailing window = last {args.window} frames)\n")
+          f"(live-shaped window: preroll={LIVE_PREROLL}, settle={LIVE_SETTLE_FRAMES})\n")
 
     print("self-check (attempt graded against its OWN true sign):")
     for sign in ("mother", "father", "you", "me", "water", "thank_you"):
@@ -1171,9 +1180,6 @@ def main():
     ap.add_argument("--target", default=None, help="starting target sign; [n] still cycles onward from here")
     ap.add_argument("--targets", default=None, help="comma-separated cycle list (default: a curated set incl. mother/father)")
     ap.add_argument("--camera", type=int, default=0, help="cv2 VideoCapture index")
-    ap.add_argument("--window", type=int, default=60,
-                    help="--selftest only: trailing-window length (frames) over a cached clip; "
-                         "the live path uses --settle-frames/--preroll/--capture-max instead")
     ap.add_argument("--min-frames", type=int, default=20, help="frames needed before grading starts")
     ap.add_argument("--settle-frames", type=int, default=8,
                     help="live capture: consecutive low-motion frames that mark an attempt CAPTURED")

@@ -21,7 +21,7 @@ from ..extractor.coco_wholebody import COCO_WHOLEBODY
 from ..extractor.mediapipe import MEDIAPIPE_HOLISTIC
 from ..features import FeaturePipeline, Standardizer, hand_motion_energy
 from ..normalizer.shoulder import ShoulderNormalizer
-from .embedding_dataset import EmbeddingClipDataset, _load_poses_npz, _tempo_features, collate_fn
+from .embedding_dataset import EmbeddingClipDataset, _live_trimmed_poses, _tempo_features, collate_fn
 from .embedding_model import PoseGraderNet
 from .phonology_labels import CATEGORICAL_PARAMETERS, MIN_SUPPORT, PhonologyLabels
 
@@ -185,9 +185,22 @@ class EmbeddingGrader:
 
     @torch.no_grad()
     def _forward_npz(self, npz_path) -> dict:
-        """Full model output for one CACHED clip -- loads poses from disk, then
-        shares the exact same forward path as the live in-memory case."""
-        return self._forward_poses(_load_poses_npz(npz_path))
+        """Full model output for one CACHED clip -- loads poses from disk,
+        trims to the SAME live-shaped span the model was trained on
+        (_live_trimmed_poses, shared with embedding_dataset.py's training-data
+        construction so this can't drift from what training actually used --
+        see its LIVE_PREROLL/LIVE_SETTLE_FRAMES), then shares the exact same
+        forward path as the live in-memory case.
+
+        The live in-memory path (_forward_poses, called directly by
+        grade_poses/grade_against_poses) does NOT trim again here -- a live
+        caller's poses already came through CaptureBuffer, which shapes them
+        live; re-trimming an already-live-shaped sequence would double-trim
+        it. This trim exists specifically so grading a CACHED FILE stays
+        representative of what a real live attempt of that same content
+        would actually look like, now that the model expects that framing
+        rather than a full raw rest->sign->rest clip."""
+        return self._forward_poses(_live_trimmed_poses(npz_path, self.pipeline))
 
     # -- grading ---------------------------------------------------------------------
 

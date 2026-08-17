@@ -144,6 +144,31 @@ def motion_active_span(energy: np.ndarray, threshold: float, pad_frames: int = 0
     return start, stop
 
 
+def live_capture_span(energy: np.ndarray, threshold: float, preroll: int, settle_frames: int) -> tuple[int, int]:
+    """[start, stop) approximating what `capture.CaptureBuffer` would ACTUALLY
+    capture live for this clip's content, for a cached rest->sign->rest clip
+    that (like every clip in this dataset) has exactly one coherent motion
+    burst: the motion-active span (`pad_frames=0` -- CaptureBuffer's own
+    margins ARE the padding, not `motion_active_span`'s) extended by
+    `preroll` frames before motion starts and `settle_frames` frames after it
+    ends, matching CaptureBuffer's idle-state preroll trim and its
+    settle-window completion rule.
+
+    This is an offline APPROXIMATION of CaptureBuffer's real frame-by-frame
+    state machine (see capture.py), not a byte-for-byte replay -- it doesn't
+    need to be one, since it exists to answer "roughly how much rest padding
+    will live capture keep around this sign," and CaptureBuffer's own
+    behavior reduces to exactly this for the single-clean-motion-burst case
+    every cached clip is. Built to close a REAL, measured train/serve
+    mismatch: ASL Citizen's raw clips carry far more rest padding than a live
+    capture ever will (see project_workflow.md's Phase 4 grader-accuracy
+    investigation) -- `embedding_dataset.py` uses this to shape TRAINING data
+    to match what the model will actually be fed live, instead of training
+    on a rest-padding distribution live capture can't reproduce."""
+    start, stop = motion_active_span(energy, threshold, pad_frames=0)
+    return max(0, start - preroll), min(len(energy), stop + settle_frames)
+
+
 @dataclass
 class FeatureClip:
     """Assembled features for one clip.

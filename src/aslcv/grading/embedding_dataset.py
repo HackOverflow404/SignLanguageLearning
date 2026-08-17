@@ -20,8 +20,23 @@ import torch
 
 from .. import dataset as dataset_mod
 from ..extractor.base import Pose
-from ..features import FeaturePipeline, Standardizer, hand_motion_energy
+from ..features import FeaturePipeline, Standardizer, hand_motion_energy, live_capture_span
 from .phonology_labels import CATEGORICAL_PARAMETERS, PhonologyLabels
+
+# Must match diagnose_demo.py's --preroll/--settle-frames SINGLE-SIGN-MODE
+# defaults (sentence mode's are deliberately larger for a different reason --
+# see project_workflow.md's Phase 7 step 5 -- so those aren't what a trained
+# clip should be shaped to match). A real, MEASURED train/serve mismatch
+# motivated this: real ASL Citizen clips carry far more rest padding than
+# live capture ever keeps (e.g. "milk": 64 lead + 66 trail rest frames around
+# only 40 active frames), and the model's repeated_movement head in
+# particular was shown to flip predictions between the two framings on real
+# val clips -- see project_workflow.md's Phase 4 grader-accuracy
+# investigation for the full writeup, including why a cheaper fix (padding
+# only the tempo feature) was tried and ruled out empirically before
+# committing to this one.
+LIVE_PREROLL = 12
+LIVE_SETTLE_FRAMES = 8
 
 
 def _load_poses_npz(npz_path) -> list[Pose]:
@@ -36,6 +51,20 @@ def _load_poses_npz(npz_path) -> list[Pose]:
             Pose(kp[t], sc[t], blendshapes=None if bs is None else bs[t])
             for t in range(n)
         ]
+
+
+def _live_trimmed_poses(npz_path, pipeline: FeaturePipeline) -> list[Pose]:
+    """A cached clip's poses, trimmed to approximate what CaptureBuffer's
+    live capture would actually keep (features.live_capture_span) instead of
+    the full raw rest->sign->rest clip -- see LIVE_PREROLL/LIVE_SETTLE_FRAMES
+    above for why. The ONE place this trim happens, shared by
+    fit_standardizer and EmbeddingClipDataset so the standardizer's stats and
+    the dataset's features can never drift onto different framings of the
+    same clips."""
+    poses = _load_poses_npz(npz_path)
+    energy = hand_motion_energy(pipeline.normalizer, pipeline.skeleton, poses)
+    start, stop = live_capture_span(energy, pipeline.motion_threshold, LIVE_PREROLL, LIVE_SETTLE_FRAMES)
+    return poses[start:stop]
 
 
 def _tempo_features(energy: np.ndarray) -> np.ndarray:
@@ -73,12 +102,17 @@ def _rows_for(extractor: str, split: str, signs) -> list[dict]:
 
 def fit_standardizer(pipeline: FeaturePipeline, extractor: str, signs) -> Standardizer:
     """Fit a Standardizer on the TRAIN split's raw features only (never val/test --
-    matches DTWGrader.build's convention exactly)."""
+    matches DTWGrader.build's convention exactly). Fits on LIVE-SHAPED clips
+    (_live_trimmed_poses), not the full raw clip -- must match
+    EmbeddingClipDataset's own trim, or the standardizer's stats and the
+    features it's applied to would silently be fit on two different
+    framings of the same clips."""
     cache_dir = dataset_mod.CACHE / extractor
     rows = _rows_for(extractor, "train", signs)
     if not rows:
         raise RuntimeError(f"no train clips found for extractor={extractor!r} over given signs")
-    feats = [pipeline.assemble_npz(cache_dir / f"{r['video_id']}.npz").features for r in rows]
+    feats = [pipeline.assemble(_live_trimmed_poses(cache_dir / f"{r['video_id']}.npz", pipeline)).features
+             for r in rows]
     return Standardizer.fit(feats)
 
 
@@ -88,6 +122,14 @@ class EmbeddingClipDataset(torch.utils.data.Dataset):
     `pipeline` must NOT carry a standardizer itself (pass raw features out); apply
     `standardizer` here explicitly so callers can fit it once on train and reuse the
     same fitted stats for val/test without accidentally re-fitting.
+
+    Every clip is trimmed to `_live_trimmed_poses` (features.live_capture_span)
+    BEFORE featurization -- both the main feature vector and the tempo/
+    periodicity signal -- so training sees roughly the same rest:signal ratio
+    live capture will actually feed the model, not the full raw ASL Citizen
+    clip's own (much larger, uncontrolled) rest padding. This closes a real,
+    measured train/serve mismatch; see project_workflow.md's Phase 4
+    grader-accuracy investigation for the full writeup.
     """
 
     def __init__(self, extractor: str, split: str, pipeline: FeaturePipeline, signs,
@@ -101,9 +143,9 @@ class EmbeddingClipDataset(torch.utils.data.Dataset):
         self.items: list[dict] = []
         for r in rows:
             npz = cache_dir / f"{r['video_id']}.npz"
-            clip = pipeline.assemble_npz(npz)
+            poses = _live_trimmed_poses(npz, pipeline)
+            clip = pipeline.assemble(poses)
             feats = clip.features if standardizer is None else standardizer.transform(clip.features)
-            poses = _load_poses_npz(npz)
             energy = hand_motion_energy(pipeline.normalizer, pipeline.skeleton, poses)
             tempo = _tempo_features(energy)
 
