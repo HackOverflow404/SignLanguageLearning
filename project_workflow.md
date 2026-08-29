@@ -1779,6 +1779,70 @@ environment — real-world tuning of `--sentence-settle-frames`/
 before trusting sentence mode's capture boundaries the way single-sign
 mode's are already trusted.
 
+**RESOLVED — first real live `--sentence` usage found a second train/serve
+distribution mismatch, this time specific to segmentation.** User report
+after actually signing a sentence live: "it often thinks I repeated the
+sign." Investigated rather than assumed to be the same already-documented
+model ceiling: `align_and_grade`'s `_segment_ranges` derives each gloss's
+`[start, stop)` purely from the DTW warp path, and that range was fed
+straight into `grade_against_poses` with zero trimming. A warp-path boundary
+is a DTW artifact, not a clean rest→sign→rest clip — a live continuous
+attempt naturally has brief pauses between words (sentence mode's own
+`SENTENCE_SETTLE_FRAMES=30` exists specifically to ride through them,
+per step 5 above), and DTW has no "no match" option, so a pause gets glued
+onto whichever segment is nearest in feature space. The model was trained on
+tightly-trimmed clips (`LIVE_PREROLL`/`LIVE_SETTLE_FRAMES`, the fix from the
+single-sign `repeated_movement` investigation above) — grading a raw,
+untrimmed segment re-creates the exact rest-padding mismatch that fix
+already closed once, just at the segment level instead of the whole-clip
+level.
+
+**Verified empirically before touching code**: built 25 synthetic 3-sign
+continuous attempts from real val clips, concatenated RAW (natural lead/
+trail rest included, no fabrication — the same honest-data convention every
+other benchmark here uses) to approximate a beginner pausing between signed
+words. Ran the (then-current) `align_and_grade` and compared each segment's
+verdict against grading that same clip in isolation (the already-fixed,
+accurate path). Real, measurable corruption, and NOT repeated_movement-
+specific — every parameter flipped versus its isolated grade:
+handshape 18.2%, minor_location 7.8%, repeated_movement 6.7%, movement 5.6%,
+major_location 5.4%.
+
+**Fix**: `align_and_grade` now re-trims each DTW-derived segment to its own
+`live_capture_span` (same signal/margins as the single-sign fix,
+`LIVE_PREROLL`/`LIVE_SETTLE_FRAMES`) before calling `grade_against_poses` —
+reusing the existing mechanism, no new trimming logic. `AlignedGrade.
+frame_range` now reports the trimmed span (what was actually graded), not
+the raw warp-path bounds. Re-ran the identical 25-trial diagnostic on the
+real fixed code (matched the prototype exactly): handshape 18.2%→5.5%,
+minor_location 7.8%→4.7%, repeated_movement 6.7%→4.0%, movement 5.6%→2.8%,
+major_location 5.4%→2.7% — roughly a 2-3x reduction across all five
+parameters on the realistic (natural-pause) case.
+
+**Honest trade-off, not hidden**: re-ran step 4's own hard-cut validation
+benchmark (`eval_forced_alignment.py`, seed=1, 100 trials) after the fix —
+that benchmark's clips are already pre-trimmed and hard-cut with no natural
+pause (the "easier than real signing" case its own caveat names), so it
+isn't the case this fix targets. Result there is a wash, not a clean win:
+major_location (92.4%→95.4%), movement (93.6%→95.3%), and repeated_movement
+(93.8%→96.1%) correct-flag agreement improved; handshape (94.1%→90.7%) and
+minor_location (94.6%→91.7%) dropped a few points — small, roughly
+symmetric shifts consistent with a few borderline cases moving across a
+decision boundary when segment edges shift by a handful of frames, not a
+systematic regression. Boundary-error median ticked up slightly (4.0%→4.3%)
+since it's now measuring a mildly different quantity — the double-trimmed
+segment length against a ground truth defined by the OTHER (looser)
+trimming convention `_trimmed_poses` uses for hard-cut splicing. Net: a
+clear win on the case this fix exists for (natural pauses, i.e. real live
+sentence signing) at the cost of a small wash on the idealized hard-cut
+benchmark that was never the realistic case to begin with.
+`PHASE7_ALIGNMENT_REPORT.md` regenerated with the new numbers. Full suite
+re-run (touches `grading/alignment.py`): two `tests/test_alignment.py`
+tests asserted the OLD "segment == exact raw DTW slice" contract and were
+updated to the new one (valid/monotonic/non-overlapping ranges that may now
+leave rest gaps at boundaries, by design) rather than loosened blindly.
+**339 passed / 10 skipped.**
+
 ### Phase 8 — Port to a phone — status: not started, scoped only
 
 Everything through Phase 7 is a desktop/dev-machine prototype: Python scripts, a

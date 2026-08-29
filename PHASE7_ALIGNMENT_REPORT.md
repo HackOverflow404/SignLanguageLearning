@@ -4,10 +4,10 @@
 
 ## Boundary error (predicted vs. true segment length, per gloss)
 
-- mean relative error: 12.8%
-- median relative error: 4.0%
-- mean absolute error: 4.7 frames
-- worst relative error: 131.4% (19/305 segments exceed 50% relative error)
+- mean relative error: 13.3%
+- median relative error: 4.3%
+- mean absolute error: 4.9 frames
+- worst relative error: 131.4% (21/305 segments exceed 50% relative error)
 
 ## Grading agreement (aligned segment vs. isolated grade of the same clip)
 
@@ -16,11 +16,11 @@ same convention every other report in this project uses.
 
 | parameter | correct-flag agreement | predicted-label agreement | n |
 |---|---|---|---|
-| handshape | 94.1% | 91.9% | 236 |
-| major_location | 92.4% | 92.4% | 302 |
-| minor_location | 94.6% | 92.1% | 240 |
-| movement | 93.6% | 91.6% | 297 |
-| repeated_movement | 93.8% | 93.8% | 305 |
+| handshape | 90.7% | 89.0% | 236 |
+| major_location | 95.4% | 95.4% | 302 |
+| minor_location | 91.7% | 91.7% | 240 |
+| movement | 95.3% | 93.9% | 297 |
+| repeated_movement | 96.1% | 96.1% | 305 |
 
 ## Honest caveat
 

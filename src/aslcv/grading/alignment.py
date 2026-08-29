@@ -10,7 +10,10 @@ against a known reference -- not open-set continuous recognition.
 Nothing here re-implements alignment or grading: it DTW-aligns the attempt's
 own features against compose_reference_features's concatenated reference,
 projects the reference's known per-frame gloss labels onto the attempt
-through the warp path to get per-gloss frame ranges, then calls
+through the warp path to get per-gloss frame ranges, re-trims each range to
+its own live_capture_span (a warp-path boundary is a DTW artifact, not a
+clean rest->sign->rest clip -- see align_and_grade's inline comment for the
+measured train/serve mismatch this closes), then calls
 EmbeddingGrader.grade_against_poses per segment exactly as the existing
 isolated-sign live loop already does -- no grading logic is duplicated.
 """
@@ -20,9 +23,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..features import hand_motion_energy, live_capture_span
 from ..production.gloss_rules import GlossSequence
 from ..production.retrieval import compose_reference_features
 from .dtw_grader import dtw_align
+from .embedding_dataset import LIVE_PREROLL, LIVE_SETTLE_FRAMES
 from .embedding_grader import EmbeddingGrader, GradeResult
 
 
@@ -94,7 +99,27 @@ def align_and_grade(grader: EmbeddingGrader, attempt_poses, gloss_sequence: Glos
 
     graded = []
     for gloss_id, (start, stop) in zip(gloss_sequence.gloss_ids, ranges):
-        segment = attempt_poses[start:stop]
+        raw_segment = attempt_poses[start:stop]
+        # A DTW-derived segment boundary is a warp-path artifact, not a clean
+        # rest->sign->rest clip -- a live continuous attempt naturally has brief
+        # pauses between words (sentence mode's own SENTENCE_SETTLE_FRAMES is
+        # built to ride through them, per diagnose_demo.py), and DTW has no
+        # "no match" option, so that rest gets glued onto whichever segment is
+        # nearest in feature space. The model was trained on tightly-trimmed
+        # clips (embedding_dataset.LIVE_PREROLL/LIVE_SETTLE_FRAMES), so grading
+        # the raw slice as-is re-creates the exact train/serve rest-padding
+        # mismatch already fixed once for single-sign capture -- verified
+        # empirically here too: 25 synthetic continuous attempts built from
+        # raw (untrimmed, real, natural-rest) val clips flipped handshape
+        # 18.2%, repeated_movement 6.7%, others 5-8%, vs. grading the same
+        # clips in isolation; re-trimming each segment to its own
+        # live_capture_span before grading (below) cut every one of those
+        # roughly 2-3x (handshape 18.2%->5.5%, repeated_movement 6.7%->4.0%).
+        energy = hand_motion_energy(grader.pipeline.normalizer, grader.pipeline.skeleton, raw_segment)
+        t_start, t_stop = live_capture_span(
+            energy, grader.pipeline.motion_threshold, LIVE_PREROLL, LIVE_SETTLE_FRAMES)
+        segment = raw_segment[t_start:t_stop]
         result = grader.grade_against_poses(segment, gloss_id)
-        graded.append(AlignedGrade(target_sign=gloss_id, frame_range=(start, stop), result=result))
+        graded.append(AlignedGrade(
+            target_sign=gloss_id, frame_range=(start + t_start, start + t_stop), result=result))
     return distance, graded

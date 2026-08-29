@@ -69,18 +69,23 @@ def test_align_and_grade_returns_one_result_per_gloss_in_order(grader):
 
 
 @pytestmark_checkpoint
-def test_align_and_grade_segments_are_monotonic_and_cover_the_attempt(grader):
+def test_align_and_grade_segments_are_monotonic_and_valid(grader):
+    """Each reported frame_range is re-trimmed to its own live_capture_span
+    before grading (see align_and_grade's inline comment for why -- a raw
+    DTW boundary can carry rest/pause frames the model wasn't trained on),
+    so segments deliberately do NOT edge-to-edge cover the raw attempt
+    anymore -- they drop rest at the boundaries, same as single-sign live
+    capture already does. What must still hold: valid, non-empty,
+    monotonic-non-decreasing ranges, never jumping backwards."""
     seq = E.gloss("I want water.")
     attempt_poses = _synthetic_continuous_attempt(seq, grader.extractor)
     _, graded = align_and_grade(grader, attempt_poses, seq)
 
-    assert graded[0].frame_range[0] == 0
-    assert graded[-1].frame_range[1] == len(attempt_poses)
     prev_stop = 0
     for g in graded:
         start, stop = g.frame_range
         assert 0 <= start < stop <= len(attempt_poses)
-        assert start >= prev_stop - 1  # segments may touch but must not jump backwards
+        assert start >= prev_stop
         prev_stop = stop
 
 
@@ -104,13 +109,20 @@ def test_align_and_grade_grades_true_target_better_than_a_mismatched_one(grader)
 
 @pytestmark_checkpoint
 def test_align_and_grade_single_gloss_sequence_needs_no_special_casing(grader):
+    """The attempt here is one raw cached clip, natural rest included --
+    frame_range is no longer expected to equal (0, len(attempt_poses))
+    now that each segment is re-trimmed to its own live_capture_span
+    (see align_and_grade); asserting it's strictly SMALLER than the raw
+    length doubles as a regression check that the trim actually ran."""
     single = _single_gloss_sequence("mother")
     attempt_poses = _synthetic_continuous_attempt(single, grader.extractor)
     distance, graded = align_and_grade(grader, attempt_poses, single)
 
     assert len(graded) == 1
     assert graded[0].target_sign == "mother"
-    assert graded[0].frame_range == (0, len(attempt_poses))
+    start, stop = graded[0].frame_range
+    assert 0 <= start < stop <= len(attempt_poses)
+    assert stop - start < len(attempt_poses)
 
 
 @pytestmark_checkpoint
