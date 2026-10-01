@@ -13,7 +13,7 @@ PROCESS_EVERY_N_FRAMES = 3
 # Keep all model weights inside the project. local_model() returns the local
 # .onnx path, downloading + extracting it flat into models/ the first time and
 # reusing it on every later run (nothing is written to ~/.cache).
-MODELS_DIR = "/home/hackoverflow/Documents/Projects/SignLanguageLearning/models"
+MODELS_DIR = "/home/hackoverflow404/Documents/Projects/SignLanguageLearning/models"
 
 
 def local_model(url):

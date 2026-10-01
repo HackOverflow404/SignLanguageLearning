@@ -10,7 +10,7 @@ from mediapipe.tasks.python.vision import drawing_styles
 import numpy as np
 
 # %% Cell 2: Configuration
-MODELS_DIR = "/home/hackoverflow/Documents/Projects/SignLanguageLearning/models"
+MODELS_DIR = "/home/hackoverflow404/Documents/Projects/SignLanguageLearning/models"
 POSE_MODEL_PATH = f"{MODELS_DIR}/pose_landmarker_full.task"
 FACE_MODEL_PATH = f"{MODELS_DIR}/face_landmarker.task"
 HAND_MODEL_PATH = f"{MODELS_DIR}/hand_landmarker.task"

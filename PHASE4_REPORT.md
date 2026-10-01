@@ -1,6 +1,6 @@
 # Phase 4 learned grader -- evaluation report
 
-Checkpoint: `/home/hackoverflow/Documents/Projects/SignLanguageLearning/models/embedding_grader` (`best`), extractor `mediapipe`, 60-sign val split (229 clips).
+Checkpoint: `/home/hackoverflow404/Documents/Projects/SignLanguageLearning/models/embedding_grader` (`best`), extractor `mediapipe`, 60-sign val split (229 clips).
 
 ## grade() / grade_against(): learned vs. DTW baseline
 
