@@ -79,6 +79,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from aslcv.attempt_log import AttemptRecorder
 from aslcv.capture import CaptureBuffer
 from aslcv.extractor.base import Pose, RunningMode
 from aslcv.extractor.coco_wholebody import COCO_WHOLEBODY
@@ -101,6 +102,7 @@ REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "data" / "manifest.csv"
 DEFAULT_CHECKPOINT = REPO / "models" / "embedding_grader"
 MASTERY_PATH = REPO / "data" / "learner_state.json"
+ATTEMPT_LOG_DIR = REPO / "data" / "live_sessions"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 # Live-capture tuning. Not CLI-exposed -- these were arrived at deliberately
@@ -115,7 +117,15 @@ SETTLE_FRAMES = LIVE_SETTLE_FRAMES  # consecutive low-motion frames marking CAPT
 CAPTURE_MAX = 150        # single-sign safety cap (frames)
 SENTENCE_SETTLE_FRAMES = 30  # larger than SETTLE_FRAMES: a multi-sign attempt has
                               # several motion rises with brief pauses that must NOT
-                              # read as the end of the attempt (Phase 7 step 5)
+                              # read as the end of the attempt (Phase 7 step 5).
+                              # Starting value only -- re-derived from
+                              # SENTENCE_SETTLE_SECONDS once the loop's fps is known.
+SENTENCE_SETTLE_SECONDS = 1.2  # measured on 9 real graded attempts (25fps webcam):
+                               # longest inter-word pause 0.84s, median 0.24s; 0.8s
+                               # cut one sentence off, 1.2s cut none. Held in seconds
+                               # because the loop's fps varies with hardware/delegate
+                               # (21-60fps) and a fixed frame count would shrink below
+                               # a real pause on a faster pipeline.
 SENTENCE_CAPTURE_MAX = 400   # sized for several signs' worth of frames, not one
 
 # A small, phonologically clear starting set -- includes the curriculum's built-in
@@ -946,6 +956,38 @@ def run_live(args):
         cv2.destroyAllWindows()
 
 
+def _attempt_meta(event, seq, grader, args, capture, n_captured, captured_span, graded):
+    """JSON sidecar for one logged sentence attempt: the capture parameters it
+    ran under (so replay can reproduce the live settle point exactly), where
+    the capture landed in the recorded stream, and -- if graded -- every
+    segment's frame range and per-parameter verdict."""
+    segments = None
+    if graded is not None:
+        segments = [{
+            "target_sign": g.target_sign,
+            "frame_range": list(g.frame_range),
+            "fidelity": g.result.fidelity,
+            "parameters": {p: {"predicted": v.predicted, "target": v.target,
+                               "correct": v.correct, "confidence": v.confidence}
+                           for p, v in g.result.parameters.items()},
+        } for g in graded]
+    return {
+        "event": event,  # "graded" | "cleared"
+        "sentence": seq.english,
+        "gloss_ids": list(seq.gloss_ids),
+        "extractor": grader.extractor,
+        "checkpoint": str(args.checkpoint),
+        "which": args.which,
+        "gpu": args.gpu,
+        "capture": {"motion_threshold": grader.pipeline.motion_threshold,
+                    "settle_frames": capture.settle_frames, "preroll": PREROLL,
+                    "max_frames": SENTENCE_CAPTURE_MAX},
+        "n_captured": n_captured,
+        "captured_span": list(captured_span) if captured_span else None,
+        "segments": segments,
+    }
+
+
 def run_live_sentence(args):
     """Phase 7 step 6: sentence mode (`--sentence "..."`). One fixed target
     sentence, ONE continuous capture bounded by CaptureBuffer tuned for a
@@ -983,6 +1025,20 @@ def run_live_sentence(args):
     win_lock = threading.Lock()
     state = {"graded": None, "coach_entries": None}
 
+    # Opt-in: record each attempt's full pose stream (including frames after
+    # CaptureBuffer settles) so capture tuning can be replayed offline against
+    # real recordings -- see aslcv.attempt_log and scripts/replay_attempts.py.
+    recorder = AttemptRecorder() if args.log_attempts else None
+    n_captured = 0
+
+    def log_attempt(event, graded=None):
+        if recorder is None or not recorder.ever_active:
+            return
+        meta = _attempt_meta(event, seq, grader, args, capture, n_captured,
+                             recorder.captured_span(n_captured) if n_captured else None, graded)
+        path = recorder.save(ATTEMPT_LOG_DIR, meta)
+        print(f"  logged attempt ({event}, {len(recorder)} frames) -> {path.relative_to(REPO)}")
+
     print(f"opening camera {args.camera} in LIVE mode (extractor {grader.extractor}"
           f"{', gpu' if args.gpu else ''}) ...")
     extractor, _ = build_extractor(grader.extractor, RunningMode.LIVE, gpu=args.gpu)
@@ -996,6 +1052,8 @@ def run_live_sentence(args):
 
     print("controls: [q]/ESC quit   [c] clear capture and retry   "
           "[n] grade the completed attempt (only once CAPTURED)")
+    if recorder is not None:
+        print(f"logging attempts to {ATTEMPT_LOG_DIR.relative_to(REPO)}/ (saved on [n] and [c]; quitting saves nothing)")
     fps_t, fps_n, fps = time.time(), 0, 0.0
     try:
         while cap.isOpened():
@@ -1004,9 +1062,14 @@ def run_live_sentence(args):
                 break
             pose = extractor.extract(frame)  # RAW frame, mirrored=False -> matches refs (issue #6)
             with win_lock:
-                capture.append(pose if pose is not None else zero_pose())
+                live_pose = pose if pose is not None else zero_pose()
+                capture.append(live_pose)
                 capture_state = capture.state
                 snap = list(capture.frames)
+            if recorder is not None:
+                recorder.record(live_pose, capture_state)
+                if capture_state == "settled" and not n_captured:
+                    n_captured = len(snap)
 
             live_canvas = extractor.draw(frame, pose) if pose is not None else frame.copy()
             if not args.no_mirror:
@@ -1021,10 +1084,20 @@ def run_live_sentence(args):
             if key in (ord("q"), 27):
                 break
             if key == ord("c"):
+                if state["graded"] is None:
+                    log_attempt("cleared")
                 with win_lock:
                     capture.reset()
+                    # Fixed per attempt (only changed on reset) so a logged attempt
+                    # replays under the one settle window it actually ran with.
+                    if fps > 0:
+                        capture.settle_frames = max(SENTENCE_SETTLE_FRAMES // 2,
+                                                    round(SENTENCE_SETTLE_SECONDS * fps))
+                if recorder is not None:
+                    recorder.reset()
+                    n_captured = 0
                 state["graded"] = None
-            if key == ord("n") and capture_state == "settled":
+            if key == ord("n") and capture_state == "settled" and state["graded"] is None:
                 try:
                     _, graded = align_and_grade(grader, snap, seq)
                 except Exception as exc:  # noqa: BLE001 -- keep the demo alive on a bad attempt
@@ -1057,6 +1130,7 @@ def run_live_sentence(args):
                     state["coach_entries"] = entries
                     for g in graded:
                         print(f"  {g.target_sign:<14} frames {g.frame_range}  fidelity {g.result.fidelity:.3f}")
+                log_attempt("graded", graded)
 
             fps_n += 1
             if time.time() - fps_t >= 0.5:
@@ -1177,6 +1251,10 @@ def main():
                          "display (needs HF_TOKEN set); presentational only, not graded; "
                          "silently skipped on any missing token/network/API failure or if the "
                          "rule engine refuses every attempt")
+    ap.add_argument("--log-attempts", action="store_true",
+                    help="sentence mode: save each attempt's pose stream (keypoints, no video) + "
+                         "verdicts to data/live_sessions/ for offline capture tuning via "
+                         "scripts/replay_attempts.py")
     ap.add_argument("--selftest", action="store_true", help="no camera: verify the whole path on cached val clips")
     args = ap.parse_args()
 
