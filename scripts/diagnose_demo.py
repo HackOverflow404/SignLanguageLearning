@@ -137,6 +137,15 @@ DISCLAIMER = ("PRACTICE AID -- confirms plumbing + match to a real reference cli
               "does NOT independently verify ASL correctness. The model itself is imperfect "
               "(see --help): a wrong verdict is often the model, not you.")
 
+# The grader's reference signers were filmed by a webcam at roughly face height.
+# A camera below the chest looking up shifts hands held in front of the body
+# upward in the image, which reads as a higher location (measured on real live
+# attempts). Not auto-detected: the 2D face cue for camera pitch overlaps the
+# spread between individual signers' faces/postures too much to warn on reliably.
+CAMERA_TIP = ("SETUP: place the camera at eye level, facing you straight on, with your "
+              "upper body and both hands in frame -- a camera looking up at you makes "
+              "location verdicts read too high.")
+
 PARAM_LABEL = {
     "handshape": "Handshape", "major_location": "Major location", "minor_location": "Minor location",
     "movement": "Movement", "repeated_movement": "Repeated",
@@ -798,6 +807,7 @@ def run_live(args):
     rows_by_sign = dict(cycle)
     print(f"targets ({len(cycle)}, [n] picks adaptively): {', '.join(pool_signs)}")
     print(DISCLAIMER)
+    print(CAMERA_TIP)
 
     # Phase 6: per-sign/per-parameter mastery persisted across sessions, and the
     # minimal pairs available for contrastive drills WITHIN this pool -- both
@@ -1012,6 +1022,7 @@ def run_live_sentence(args):
     seq, composed_video = resolve_sentence(args, grader)
     print(f'target sentence: "{seq.english}" -> {" ".join(seq.gloss_ids)}')
     print(DISCLAIMER)
+    print(CAMERA_TIP)
 
     mastery = MasteryState.load(MASTERY_PATH)
 
