@@ -2,11 +2,11 @@
 (ONNX graph + plain data files) and verify it numerically against PyTorch.
 
 Writes models/mobile/ (see aslcv.grading.bundle_grader for the format):
-  grader.onnx, references.f32, bundle.json
+  grader.onnx, references.f32, bundle.json, skeleton.json (point names, anchors,
+  and regions, so client code looks points up by meaning, never by hardcoded index)
 
 Also writes models/mobile/fixtures/ (--fixtures N, 0 to skip): golden files for
-the TypeScript port -- skeleton.json (names/anchors/regions, so the port looks
-points up by meaning, never by hardcoded index) and one JSON per val clip with
+the TypeScript port -- one JSON per val clip with
 the raw keypoints in and every intermediate out (live_capture_span trim, raw
 features, motion energy, tempo, model outputs, verdicts). Float arrays are
 base64 little-endian float32, so the port compares exact values, not decimal
@@ -93,9 +93,6 @@ def write_fixtures(grader, bundle_dir, rows, out_dir):
     the runtime the phone actually uses -- not from torch."""
     sk = grader.pipeline.skeleton
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "skeleton.json").write_text(json.dumps({
-        "names": list(sk.names), "anchors": dict(sk.anchors),
-        "regions": {name: list(idx) for name, idx in sk.regions}}, indent=1))
     face = np.array(sk.region("face"))
     bundle = BundleGrader(bundle_dir)
     signs = grader.signs
@@ -129,7 +126,7 @@ def write_fixtures(grader, bundle_dir, rows, out_dir):
                 "grades": grades}}
         (out_dir / f"clip_{i:02d}_{r['id_gloss']}.json").write_text(json.dumps(fixture))
     size = sum(f.stat().st_size for f in out_dir.iterdir()) / 1e6
-    print(f"wrote {len(rows)} golden fixtures + skeleton.json -> {out_dir.relative_to(REPO)}/ ({size:.1f} MB)")
+    print(f"wrote {len(rows)} golden fixtures -> {out_dir.relative_to(REPO)}/ ({size:.1f} MB)")
 
 
 def main():
@@ -175,9 +172,13 @@ def main():
         input_names=["features", "tempo"], output_names=list(OUTPUT_NAMES),
         dynamic_axes={"features": {1: "frames"}}, opset_version=17, dynamo=False)
     (args.out / "bundle.json").write_text(json.dumps(meta, indent=1))
+    sk = grader.pipeline.skeleton
+    (args.out / "skeleton.json").write_text(json.dumps({
+        "names": list(sk.names), "anchors": dict(sk.anchors),
+        "regions": {name: list(idx) for name, idx in sk.regions}}, indent=1))
     size = sum(f.stat().st_size for f in args.out.iterdir() if f.is_file()) / 1e6
     print(f"wrote {args.out.relative_to(REPO)}/ ({size:.1f} MB): grader.onnx, references.f32 "
-          f"({len(refs)} x {meta['embed_dim']}), bundle.json")
+          f"({len(refs)} x {meta['embed_dim']}), bundle.json, skeleton.json")
 
     # -- verification -----------------------------------------------------------------
     import onnxruntime as ort
