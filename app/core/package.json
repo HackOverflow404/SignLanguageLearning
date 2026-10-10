@@ -1,0 +1,18 @@
+{
+  "name": "@aslcv/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform-independent grading core for the ASL tutor app: pose normalization, feature assembly, motion energy, capture trim, tempo, and bundle-based grading. Ported from src/aslcv and checked against Python-exported golden fixtures.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "onnxruntime-node": "^1.30.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

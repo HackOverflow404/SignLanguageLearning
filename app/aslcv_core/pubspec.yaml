@@ -1,0 +1,10 @@
+name: aslcv_core
+description: Pure-Dart port of the grading pipeline (normalizer, features, tempo, capture, bundle grader), parity-tested against Python golden fixtures.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dev_dependencies:
+  test: ^1.25.0

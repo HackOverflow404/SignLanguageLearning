@@ -1,0 +1,8 @@
+node_modules/
+
+# Reproducible binaries: flutter_spike/mediapipe_ios/tool/fetch_frameworks.sh
+# rebuilds the frameworks; the model assets are copies of models/ (gitignored).
+flutter_spike/mediapipe_ios/ios/mediapipe_ios/Frameworks/
+flutter_spike/assets/*.onnx
+flutter_spike/assets/*.task
+.dart_tool/
