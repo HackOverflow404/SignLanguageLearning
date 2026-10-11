@@ -1896,7 +1896,8 @@ Against the six scoped items:
 2. **Normalizer/features port — done, in Dart.** `app/aslcv_core/` (pure Dart,
    float32-exact via a Math.fround equivalent): skeleton, normalizer, feature
    assembly, motion energy, live trim, tempo, CaptureBuffer, bundle grader, and
-   the MediaPipe-output -> combined-keypoint-layout mapping. `dart test`: 58
+   the MediaPipe-output -> combined-keypoint-layout mapping, plus the learner
+   model, scheduler and coaching text (item 6). `dart test`: 70
    tests -- CaptureBuffer cases mirroring `tests/test_capture.py`, every
    pipeline stage on 8 golden val clips end to end (`scripts/export_mobile.py`
    fixtures), and the layout mapping against `MediaPipePoseExtractor
@@ -1914,7 +1915,21 @@ Against the six scoped items:
    (`scripts/export_reference_clips.py`). Small enough that streaming isn't
    worth it; works offline.
 5. **Gloss engine placement — not started** (sentence mode isn't ported yet).
-6. **Learner state — not started** (mastery/scheduler not ported yet).
+6. **Learner state — done.** `app/aslcv_core/lib/src/learner.dart` ports
+   `MasteryState` (EMA + SM2 spacing on the attempt clock, same JSON keys as
+   `data/learner_state.json`) and `pick_next`/`find_minimal_pairs`;
+   `coaching.dart` ports `coach_text`/`focus_parameter`/`readable_value`. The
+   grounded text (`describe_sign` per sign, `describe_handshape` per grounded
+   code) is written by Python into the bundle's `text.json`
+   (`scripts/export_learner_text.py`), so `phonology.csv` never ships and the
+   phone never re-derives ASL-LEX text. Parity: `export_learner_text.py` also
+   writes `fixtures/learner.json` (readable values, 60 coaching cases, the
+   bundle's minimal pairs, and the exact state after 120 mastery updates); all
+   match in Dart, which needed Python's half-to-even `round()` for SM2
+   intervals. Mastery is saved as JSON in the app's documents directory
+   (temp file + rename). One deliberate difference from `diagnose_demo.py`:
+   the phone records EVERY graded attempt (it grades once per capture), where
+   the desktop records only the verdict on screen when `[n]` is pressed.
 
 *Measured on-device before trusting live grades:*
 - GPU vs CPU landmark delegate. On one still frame the CPU path matches Python
@@ -1928,16 +1943,19 @@ Against the six scoped items:
   change in accuracy, and resampling 24 -> 30 fps does not reduce the flips, so
   no resampling was added.
 
-*The app:* `app/tutor/` -- pick a sign, its reference clip loops, capture
+*The app:* `app/tutor/` -- the scheduler picks a sign (or pick one by hand),
+its reference clip loops beside its grounded description, capture
 (READY/CAPTURING/CAPTURED via the bundle's own CaptureBuffer settings) grades
-automatically on settle and shows all five parameter verdicts with you/target
-values, plus a diagnostics sheet (delegate, fps, hand-slot test, CPU/GPU
+automatically on settle and shows the coaching line plus all five parameter
+verdicts with you/target values, and updates saved mastery. "Next sign" runs
+the scheduler, naming the parameter when it picks a contrast drill. Plus a
+diagnostics sheet (delegate, fps, hand-slot test, CPU/GPU
 landmark parity, the GPU-vs-CPU grade check). Assets are copied from `models/`
 by `app/tutor/tool/sync_assets.sh` (gitignored).
 
-*Remaining for "done":* mastery + spaced-repetition scheduler on the phone,
-coaching text, sentence mode (and where the gloss engine runs), attempt logging
-from the phone, Android.
+*Remaining for "done":* sentence mode (and where the gloss engine runs),
+attempt logging from the phone, Android. Optional: LLM-phrased coaching
+(`--llm-feedback`'s hosted-API call) on the phone.
 
 **Original scoping (written before any of the above was started):**
 
@@ -2292,7 +2310,8 @@ passed / 10 skipped.**
                        #   benchmark_extractors.py (Phase 3: FPS/jitter/region-split
                        #   hand-dropout across all 4 extractors, --gpu for mediapipe),
                        #   export_mobile.py / export_reference_clips.py /
-                       #   export_layout_fixture.py (Phase 8 bundle, clips, fixtures),
+                       #   export_learner_text.py / export_layout_fixture.py
+                       #   (Phase 8 bundle, clips, grounded text, fixtures),
                        #   replay_attempts.py (re-run logged live attempts through
                        #   CaptureBuffer with other settings)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum

@@ -98,8 +98,9 @@ is ported to Dart and parity-tested against Python, and the grader runs as an ON
 model. Before trusting it, the main risks of moving to a phone were measured on the
 device: hand handedness (the camera feed arrives mirrored and is un-mirrored before
 detection), the GPU vs CPU landmark path (no change to grades), and 24 vs 30 fps (no
-change in accuracy). Not yet on the phone: the adaptive scheduler, coaching,
-sentence mode, Android.
+change in accuracy). The adaptive loop runs on the phone too: saved per-sign mastery,
+the spaced-repetition scheduler with contrast drills, and coaching text. Not yet on
+the phone: sentence mode, Android.
 
 **Open:** fluent Deaf review of the gloss rule engine's output (a human bottleneck,
 not a coding task — see `scripts/export_review_sheet.py`); the rest of Phase 8; and
@@ -236,6 +237,7 @@ See [`app/tutor/README.md`](app/tutor/README.md) for the full steps. In short:
 ```bash
 .venv/bin/python scripts/export_mobile.py            # grader -> models/mobile/ (ONNX bundle)
 .venv/bin/python scripts/export_reference_clips.py   # 60 trimmed reference clips
+.venv/bin/python scripts/export_learner_text.py      # grounded sign/handshape text + fixtures
 app/mediapipe_ios/tool/fetch_frameworks.sh           # MediaPipe iOS frameworks (once)
 app/tutor/tool/sync_assets.sh                        # copy models into the app
 (cd app/aslcv_core && dart test)                     # Dart port parity tests

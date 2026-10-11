@@ -1,6 +1,7 @@
 // ASL tutor, single-sign mode: watch the target's real reference clip, sign
 // it, and get a verdict per phonological parameter -- distance to the known
-// target, never "which sign was that".
+// target, never "which sign was that". Each graded attempt updates the
+// learner's saved mastery, and "Next sign" asks the scheduler what to drill.
 //
 // Camera frames: the front camera's stream is selfie-mirrored (the camera
 // plugin sets isVideoMirrored on it). Grading must see the camera's TRUE view,
@@ -18,6 +19,7 @@ import 'package:video_player/video_player.dart';
 
 import 'delegate_check.dart';
 import 'engine.dart';
+import 'progress.dart';
 
 const _maxCaptureFrames = 150; // diagnose_demo.py's single-sign cap
 
@@ -41,9 +43,11 @@ class _LoadingPageState extends State<LoadingPage> {
   @override
   void initState() {
     super.initState();
-    Engine.load().then((engine) {
+    Future.wait([Engine.load(), Progress.load()]).then((loaded) {
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => TutorPage(engine: engine)));
+      final (engine, progress) = (loaded[0] as Engine, loaded[1] as Progress);
+      Navigator.of(context)
+          .pushReplacement(MaterialPageRoute(builder: (_) => TutorPage(engine: engine, progress: progress)));
     }).catchError((Object e) {
       if (mounted) setState(() => _error = '$e');
     });
@@ -61,8 +65,9 @@ class _LoadingPageState extends State<LoadingPage> {
 
 class TutorPage extends StatefulWidget {
   final Engine engine;
+  final Progress progress;
 
-  const TutorPage({super.key, required this.engine});
+  const TutorPage({super.key, required this.engine, required this.progress});
 
   @override
   State<TutorPage> createState() => _TutorPageState();
@@ -70,8 +75,11 @@ class TutorPage extends StatefulWidget {
 
 class _TutorPageState extends State<TutorPage> {
   Engine get engine => widget.engine;
+  MasteryState get mastery => widget.progress.state;
 
-  late String _target = engine.signs.contains('mother') ? 'mother' : engine.signs.first;
+  late String _target = pickNext(mastery, engine.signs, minimalPairs: engine.minimalPairs);
+  String? _lastFocus; // the last graded attempt's focus mistake on _target, for a contrastive drill
+  String? _drillNote; // why the scheduler picked _target, when it is a contrast drill
   late final CaptureBuffer<Pose> _capture = CaptureBuffer<Pose>(
     (frames) => handMotionEnergy(frames, engine.skeleton),
     engine.meta.motionThreshold,
@@ -98,6 +106,7 @@ class _TutorPageState extends State<TutorPage> {
   int _gradeFrames = 0;
   bool _grading = false;
   String? _gradeError;
+  String? _coach;
 
   @override
   void initState() {
@@ -184,8 +193,13 @@ class _TutorPageState extends State<TutorPage> {
     try {
       final grade = await gradeAttempt(engine.grader, engine.skeleton, frames, _target);
       if (!mounted) return;
+      // Every graded attempt is evidence; null verdicts are skipped inside update().
+      mastery.update(_target, {for (final v in grade.parameters.values) v.parameter: v.correct});
+      unawaited(widget.progress.save());
       setState(() {
         _grade = grade;
+        _coach = coachText(grade.parameters.values, engine.text.handshapes);
+        _lastFocus = focusParameter(grade.parameters.values);
         _gradeFrames = frames.length;
         _gradeFps = times.length > 1 ? 1000 * (times.length - 1) / (times.last - times.first) : 0;
       });
@@ -201,18 +215,29 @@ class _TutorPageState extends State<TutorPage> {
         _captureTimes.clear();
         _grade = null;
         _gradeError = null;
+        _coach = null;
       });
 
-  void _setTarget(String sign) {
-    if (sign == _target) return;
+  void _setTarget(String sign, {String? drillNote}) {
+    _drillNote = drillNote;
+    if (sign == _target) return _tryAgain();
     _target = sign;
+    _lastFocus = null;
     _tryAgain();
     _loadReference();
   }
 
   void _nextSign() {
-    final signs = engine.signs;
-    _setTarget(signs[(signs.indexOf(_target) + 1) % signs.length]);
+    final previous = _target;
+    final next = pickNext(mastery, engine.signs,
+        lastSign: previous, lastWrongParameter: _lastFocus, minimalPairs: engine.minimalPairs);
+    String? note;
+    for (final MapEntry(key: p, value: pairs) in engine.minimalPairs.entries) {
+      if (pairs.contains((previous, next)) || pairs.contains((next, previous))) {
+        note = 'Contrast drill: ${glossLabel(next)} differs from ${glossLabel(previous)} only in ${paramName[p]}.';
+      }
+    }
+    _setTarget(next, drillNote: note);
   }
 
   @override
@@ -329,6 +354,10 @@ class _TutorPageState extends State<TutorPage> {
         Text('Grading...'),
       ]));
     } else if (grade == null) {
+      if (_drillNote != null) {
+        children.add(Text(_drillNote!, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.primary)));
+        children.add(const SizedBox(height: 4));
+      }
       children.add(Text(
         switch (_capture.state) {
           CaptureState.idle => 'Watch the clip, then sign ${glossLabel(_target)}. Start from rest, '
@@ -338,11 +367,22 @@ class _TutorPageState extends State<TutorPage> {
         },
         style: theme.textTheme.titleMedium,
       ));
+      final description = engine.text.signs[_target];
+      if (description != null) {
+        children.add(const SizedBox(height: 6));
+        children.add(Text(description, style: theme.textTheme.bodyMedium));
+      }
+      children.add(const SizedBox(height: 4));
+      children.add(Text(_masteryLine(), style: theme.textTheme.bodySmall));
     } else {
       final judged = grade.parameters.values.where((v) => v.correct != null).toList();
       final right = judged.where((v) => v.correct == true).length;
       children.add(Text('$right of ${judged.length} graded aspects match ${glossLabel(_target)}',
           style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)));
+      if (_coach != null) {
+        children.add(const SizedBox(height: 4));
+        children.add(Text(_coach!, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)));
+      }
       children.add(const SizedBox(height: 4));
       for (final p in _parameterOrder) {
         final v = grade.parameters[p];
@@ -351,7 +391,7 @@ class _TutorPageState extends State<TutorPage> {
       children.add(const SizedBox(height: 4));
       children.add(Text(
         'Distance to reference ${grade.fidelity.toStringAsFixed(2)} (lower is closer) · '
-        '$_gradeFrames frames at ${_gradeFps.toStringAsFixed(0)} fps',
+        '$_gradeFrames frames at ${_gradeFps.toStringAsFixed(0)} fps · ${_masteryLine()}',
         style: theme.textTheme.bodySmall,
       ));
       children.add(Text(
@@ -379,6 +419,13 @@ class _TutorPageState extends State<TutorPage> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: children),
       ),
     );
+  }
+
+  String _masteryLine() {
+    final n = mastery.attemptsFor(_target);
+    return n == 0
+        ? 'First time on ${glossLabel(_target)}'
+        : 'Mastery of ${glossLabel(_target)}: ${(100 * mastery.signMastery(_target)).round()}%';
   }
 
   Widget _verdictRow(Verdict v, ThemeData theme) {
@@ -423,11 +470,16 @@ class _TutorPageState extends State<TutorPage> {
           'Camera: ${size == null ? '-' : '${size.width.round()}x${size.height.round()}'}, '
               'un-mirrored before detection: $_unmirror',
           'Reference clip: ${engine.clips[_target]!.videoId} (signer ${engine.clips[_target]!.signerId})',
+          'Progress: ${mastery.mastery.length} signs practised, ${mastery.clock} graded attempts',
           '',
           'Hand test: hold only your RIGHT hand up, still, for a few seconds.',
           ..._handStats.describe(),
         ],
         onReset: _handStats.reset,
+        onResetProgress: () async {
+          await widget.progress.reset();
+          if (mounted) setState(() {});
+        },
       ),
     );
   }
@@ -482,8 +534,9 @@ class _Diagnostics extends StatefulWidget {
   final Engine engine;
   final List<String> Function() lines;
   final VoidCallback onReset;
+  final Future<void> Function() onResetProgress;
 
-  const _Diagnostics({required this.engine, required this.lines, required this.onReset});
+  const _Diagnostics({required this.engine, required this.lines, required this.onReset, required this.onResetProgress});
 
   @override
   State<_Diagnostics> createState() => _DiagnosticsState();
@@ -542,7 +595,23 @@ class _DiagnosticsState extends State<_Diagnostics> {
                 'CPU:\n$_cpu\n\nGPU (what live grading uses):\n$_gpu',
               ),
               const SizedBox(height: 8),
-              OutlinedButton(onPressed: widget.onReset, child: const Text('Reset hand counts')),
+              Wrap(spacing: 8, children: [
+                OutlinedButton(onPressed: widget.onReset, child: const Text('Reset hand counts')),
+                OutlinedButton(
+                  onPressed: () => showDialog<bool>(
+                    context: context,
+                    builder: (c) => AlertDialog(
+                      title: const Text('Reset progress?'),
+                      content: const Text('Forget every sign\'s mastery and practice history.'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+                        TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Reset')),
+                      ],
+                    ),
+                  ).then((ok) => ok == true ? widget.onResetProgress() : null),
+                  child: const Text('Reset progress'),
+                ),
+              ]),
               const SizedBox(height: 16),
               const Text('Grades on GPU vs CPU landmarks, over 20 reference clips (about 2 minutes; '
                   'keep this sheet open):'),

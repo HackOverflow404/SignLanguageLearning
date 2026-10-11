@@ -1,6 +1,6 @@
 /// Everything the tutor loads once at startup: the exported grading bundle
-/// (ONNX graph + references + metadata + skeleton), the MediaPipe
-/// landmarkers, and the reference-clip index.
+/// (ONNX graph + references + metadata + skeleton + grounded text), the
+/// MediaPipe landmarkers, and the reference-clip index.
 library;
 
 import 'dart:convert';
@@ -26,8 +26,10 @@ class Engine {
   final MediaPipeLayout layout;
   final Map<String, ReferenceClip> clips;
   final String delegate; // what the live landmarkers actually run on
+  final LearnerText text;
+  late final Map<String, List<(String, String)>> minimalPairs = findMinimalPairs(meta.signs, signs);
 
-  Engine._(this.grader, this.skeleton, this.layout, this.clips, this.delegate);
+  Engine._(this.grader, this.skeleton, this.layout, this.clips, this.delegate, this.text);
 
   BundleMeta get meta => grader.meta;
 
@@ -64,9 +66,10 @@ class Engine {
     final clips = index.map((sign, c) => MapEntry(
         sign, ReferenceClip('assets/clips/${c['file']}', c['video_id'] as String, c['signer_id'] as String)));
 
+    final text = LearnerText.fromJson(jsonDecode(await rootBundle.loadString('assets/bundle/text.json')));
     final delegate = await MediapipeIos.init(
         poseAsset: 'assets/mediapipe/pose_landmarker_full.task', handAsset: 'assets/mediapipe/hand_landmarker.task');
-    return Engine._(BundleGrader(meta, references, run), skeleton, MediaPipeLayout(skeleton), clips, delegate);
+    return Engine._(BundleGrader(meta, references, run), skeleton, MediaPipeLayout(skeleton), clips, delegate, text);
   }
 
   /// The plugin's detection result -> one raw pose in the bundle's layout.

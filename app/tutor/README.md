@@ -1,9 +1,12 @@
 # ASL Tutor (Flutter)
 
-The phone app (Phase 8). Single-sign mode: pick a sign, watch its real reference
-clip, sign it, and get a verdict for each phonological parameter (handshape,
-location, exact spot, movement, repeats) against that known target. It always
-measures distance to the target sign, never guesses "which sign was that".
+The phone app (Phase 8). Single-sign mode: the scheduler picks a sign (or pick one
+yourself), you watch its real reference clip, sign it, and get a coaching line plus a
+verdict for each phonological parameter (handshape, location, exact spot, movement,
+repeats) against that known target. It always measures distance to the target sign,
+never guesses "which sign was that". Each graded attempt updates per-sign mastery,
+saved on the phone; "Next sign" picks what to drill next (weak and due signs first,
+a contrast drill when a minimal-pair partner exists for your last mistake).
 
 The grading pipeline itself lives in [`../aslcv_core`](../aslcv_core) (pure Dart,
 parity-tested against the Python implementation) and the landmark detection in
@@ -12,9 +15,11 @@ parity-tested against the Python implementation) and the landmark detection in
 - `lib/engine.dart`: loads the ONNX grader bundle, skeleton, reference-clip index
   and MediaPipe landmarkers; converts landmarker output into the bundle's
   keypoint layout.
-- `lib/main.dart`: camera, landmarks, `CaptureBuffer`, grading, and the result
-  screen; the ⓘ diagnostics sheet (delegate, fps, hand-slot test, landmark parity
-  vs Python).
+- `lib/main.dart`: camera, landmarks, `CaptureBuffer`, grading, coaching, the
+  scheduler, and the result screen; the ⓘ diagnostics sheet (delegate, fps,
+  hand-slot test, landmark parity vs Python, reset progress).
+- `lib/progress.dart`: saves `MasteryState` as JSON in the app's documents
+  directory (same keys as the desktop's `data/learner_state.json`).
 - `lib/delegate_check.dart`: grades the bundled reference clips with GPU and with
   CPU landmarks and compares the verdicts.
 
@@ -32,6 +37,7 @@ once, and the phone plugged in, unlocked and trusted.
 # from the repo root, once per model/bundle change
 .venv/bin/python scripts/export_mobile.py
 .venv/bin/python scripts/export_reference_clips.py
+.venv/bin/python scripts/export_learner_text.py
 app/mediapipe_ios/tool/fetch_frameworks.sh     # first checkout only
 app/tutor/tool/sync_assets.sh
 
@@ -48,5 +54,4 @@ Close the app on the phone before installing. If the install fails with
 
 ## Not yet here
 
-Mastery tracking and the next-sign scheduler, coaching text, sentence mode,
-attempt logging, Android.
+Sentence mode, attempt logging, Android.

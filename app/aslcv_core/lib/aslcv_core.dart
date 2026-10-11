@@ -8,8 +8,10 @@ import 'src/skeleton.dart';
 import 'src/tempo.dart';
 
 export 'src/capture.dart';
+export 'src/coaching.dart';
 export 'src/features.dart';
 export 'src/grader.dart';
+export 'src/learner.dart';
 export 'src/mediapipe_layout.dart';
 export 'src/normalizer.dart';
 export 'src/skeleton.dart';
