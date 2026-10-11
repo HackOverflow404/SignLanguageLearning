@@ -103,6 +103,26 @@ MANIFEST = REPO / "data" / "manifest.csv"
 DEFAULT_CHECKPOINT = REPO / "models" / "embedding_grader"
 MASTERY_PATH = REPO / "data" / "learner_state.json"
 ATTEMPT_LOG_DIR = REPO / "data" / "live_sessions"
+SCREENSHOT_DIR = REPO / "data" / "screenshots"
+
+
+def _score_label(name: str, results) -> str:
+    """File-name score for an auto-saved screenshot: judged parameters matched
+    across `results` (GradeResults) and their mean fidelity (lower = closer)."""
+    judged = [v.correct for r in results for v in r.parameters.values() if v.correct is not None]
+    fid = sum(r.fidelity for r in results) / len(results)
+    return f"{name}-{sum(judged)}of{len(judged)}-fid{fid:.3f}"
+
+
+def save_screenshot(canvas, label: str = "") -> None:
+    """Write the exact composed canvas (full resolution, independent of the
+    window's on-screen size) to SCREENSHOT_DIR -- on [s], or automatically for
+    every graded attempt with --screenshots (`label` then carries the score)."""
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"
+    path = SCREENSHOT_DIR / f"{stamp}{'-' + label if label else ''}.png"
+    cv2.imwrite(str(path), canvas)
+    print(f"  screenshot -> {path.relative_to(REPO)}")
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 # Live-capture tuning. Not CLI-exposed -- these were arrived at deliberately
@@ -407,10 +427,11 @@ def draw_verdict(canvas, result, target_sign, stale, capture_state, mastery=None
 
 
 def draw_status_bar(canvas, y_top, fps, grade_ms, controls="[q]uit   [c]lear   [n]ext"):
-    """Status/disclaimer bar, drawn starting exactly at `y_top` (wherever the
-    content above it actually ended) and extending to the canvas bottom --
-    never pinned to a fixed offset from the bottom, so it can't be squeezed
-    or overlapped if the content above it turned out taller than expected.
+    """Status/disclaimer bar: a band of its own height at the canvas bottom,
+    or starting exactly at `y_top` (wherever the content above it actually
+    ended) if that content reaches lower -- so it can never overlap the
+    content above it, and never blankets the live camera view between that
+    content and the bottom either.
 
     `controls` defaults to single-sign mode's exact original text (unchanged
     behavior for every existing caller); sentence mode passes its own
@@ -419,6 +440,8 @@ def draw_status_bar(canvas, y_top, fps, grade_ms, controls="[q]uit   [c]lear   [
     it does nothing at all until an attempt is CAPTURED)."""
     h = canvas.shape[0]
     disclaimer_lines = textwrap.wrap(DISCLAIMER, width=_wrap_width(canvas, 18, F_TINY))
+    band_h = 28 + len(disclaimer_lines) * 26 + 16
+    y_top = max(y_top, h - band_h)
     _panel_bg(canvas, y_top, h, color=BG_HEADER, alpha=0.93)
     _divider(canvas, y_top)
     status = f"{fps:.0f} fps   grade {grade_ms:.0f} ms   {controls}"
@@ -891,7 +914,7 @@ def run_live(args):
         raise SystemExit(f"cannot open camera {args.camera}")
 
     print("controls: [q]/ESC quit   [c] clear capture (keeps last verdict)   "
-          "[n] record + adaptively pick next target")
+          "[n] record + adaptively pick next target   [s] save screenshot")
     fps_t, fps_n, fps = time.time(), 0, 0.0
     try:
         while cap.isOpened():
@@ -917,10 +940,16 @@ def run_live(args):
                                      sentence_prompt=state["sentence_prompt"],
                                      coach_text=state["coach_text"], coach_text_for=state["coach_text_for"])
             cv2.imshow("ASL diagnose demo", canvas)
+            if (args.screenshots and result is not None and not stale and capture_state == "settled"
+                    and result is not state.get("shot_result")):
+                state["shot_result"] = result
+                save_screenshot(canvas, _score_label(state["target"], [result]))
 
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
+            if key == ord("s"):
+                save_screenshot(canvas)
             if key == ord("c"):
                 with win_lock:
                     capture.reset()
@@ -1062,7 +1091,7 @@ def run_live_sentence(args):
         raise SystemExit(f"cannot open camera {args.camera}")
 
     print("controls: [q]/ESC quit   [c] clear capture and retry   "
-          "[n] grade the completed attempt (only once CAPTURED)")
+          "[n] grade the completed attempt (only once CAPTURED)   [s] save screenshot")
     if recorder is not None:
         print(f"logging attempts to {ATTEMPT_LOG_DIR.relative_to(REPO)}/ (saved on [n] and [c]; quitting saves nothing)")
     fps_t, fps_n, fps = time.time(), 0, 0.0
@@ -1090,10 +1119,15 @@ def run_live_sentence(args):
             canvas = compose_sentence_canvas(ref_frame, live_canvas, seq, state["graded"], capture_state,
                                               fps, 0.0, coach_entries=state["coach_entries"])
             cv2.imshow("ASL diagnose demo -- sentence mode", canvas)
+            if args.screenshots and state["graded"] is not None and state.get("shot_for") is not state["graded"]:
+                state["shot_for"] = state["graded"]
+                save_screenshot(canvas, _score_label("sentence", [g.result for g in state["graded"]]))
 
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
+            if key == ord("s"):
+                save_screenshot(canvas)
             if key == ord("c"):
                 if state["graded"] is None:
                     log_attempt("cleared")
@@ -1262,6 +1296,9 @@ def main():
                          "display (needs HF_TOKEN set); presentational only, not graded; "
                          "silently skipped on any missing token/network/API failure or if the "
                          "rule engine refuses every attempt")
+    ap.add_argument("--screenshots", action="store_true",
+                    help="save a full-resolution screenshot of every graded attempt to "
+                         "data/screenshots/, its score in the file name ([s] saves one any time)")
     ap.add_argument("--log-attempts", action="store_true",
                     help="sentence mode: save each attempt's pose stream (keypoints, no video) + "
                          "verdicts to data/live_sessions/ for offline capture tuning via "

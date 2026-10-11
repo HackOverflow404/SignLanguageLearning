@@ -78,7 +78,11 @@ MediaPipe-holistic, record-your-own-signs, WLASL, classifier-into-SRS pipeline).
 > SM2-style spaced-repetition scheduler with a first difficulty-control signal**
 > (proactive minimal-pair stress-testing of well-mastered signs) — see Phase 6
 > status for the full writeup. What's open: actual fluent Deaf review of Phase
-> 5b's engine output (a human bottleneck, not code), and Phase 8 itself.
+> 5b's engine output (a human bottleneck, not code), and the rest of Phase 8.
+> **Phase 8 is now underway** (2026-10-10): a Flutter app built on Linux grades
+> single signs live on an iPhone, with the grader exported to ONNX, the feature
+> pipeline ported to Dart and parity-tested, and the GPU/frame-rate/mirroring
+> risks each measured — see Phase 8's Progress block.
 >
 > **Also built since:** `scripts/diagnose_demo.py` — a live webcam demo of
 > `EmbeddingGrader.grade_against`, letting a learner practice a target sign against
@@ -1413,7 +1417,7 @@ separately above.
   sessions too, not just within one**) — nothing fixed except the reference
   correctness.
 
-### Phase 7 — Sentence grading via forced alignment — status: DONE (all 6 steps), live-capture tuning untested against a real camera
+### Phase 7 — Sentence grading via forced alignment — status: DONE (all 6 steps), live capture tuned on real recordings
 
 **Reframed from the original "CTC-style continuous recognition" spec, deliberately.**
 Industry CSLR (the RWTH PHOENIX lineage's CTC decoders, DeepMind's SL2T, the
@@ -1779,6 +1783,21 @@ environment — real-world tuning of `--sentence-settle-frames`/
 before trusting sentence mode's capture boundaries the way single-sign
 mode's are already trusted.
 
+**RESOLVED — sentence-mode capture tuned against real recordings.**
+`diagnose_demo.py --log-attempts` saves every raw pose the live loop fed
+`CaptureBuffer` since the last reset (`aslcv.attempt_log.AttemptRecorder`,
+keypoints only, never video, to `data/live_sessions/`), including frames
+after the buffer settled -- the evidence for a capture that ended mid-sentence
+while the learner kept signing. `scripts/replay_attempts.py` re-runs those
+recordings through the real `CaptureBuffer` under other settings (first
+checking that the live settings reproduce the live settle point exactly).
+On 9 real graded attempts (25 fps webcam): longest inter-word pause 0.84 s,
+median 0.24 s; a 0.8 s settle window cut one sentence off, 1.2 s cut none.
+The settle window is now held in seconds (`SENTENCE_SETTLE_SECONDS = 1.2`,
+converted to frames once the loop's fps is known), since the pipeline runs
+anywhere from 21 to 60 fps depending on hardware and delegate, and a fixed
+frame count would shrink below a real pause on a faster pipeline.
+
 **RESOLVED — first real live `--sentence` usage found a second train/serve
 distribution mismatch, this time specific to segmentation.** User report
 after actually signing a sentence live: "it often thinks I repeated the
@@ -1843,7 +1862,84 @@ updated to the new one (valid/monotonic/non-overlapping ranges that may now
 leave rest gaps at boundaries, by design) rather than loosened blindly.
 **339 passed / 10 skipped.**
 
-### Phase 8 — Port to a phone — status: not started, scoped only
+### Phase 8 — Port to a phone — status: IN PROGRESS (single-sign grading runs live on an iPhone)
+
+**Progress (2026-10-10).** The scoping below is kept as written; this block
+records what has actually been built and measured against it.
+
+*Framework: Flutter, iOS first, built on Linux.* React Native was picked first
+(the user knows it better) and the feature math was ported to TypeScript, but
+the user has no Mac and only a free Apple ID, which blocks RN's iOS builds (EAS
+device installs need a paid account). Flutter builds for iOS on Linux via the
+omarchy-apple-dev toolchain (xtool + the Xcode SDK extracted from Xcode.xip;
+`flutter/build.sh <app>` -> `build/ios-linux/Runner.ipa`, `xtool install` to
+the phone; free-account installs expire after 7 days). A feasibility spike
+(`app/flutter_spike/`) proved camera + ONNX Runtime + MediaPipe on the phone
+before the switch was made. The TypeScript port (`app/core/`) is superseded by
+the Dart one.
+
+Against the six scoped items:
+1. **MediaPipe native SDK — done (iOS).** `app/mediapipe_ios/` is a local
+   SwiftPM Flutter plugin around MediaPipe Tasks 0.10.35 (the same version as
+   the Python cache), pose + hand landmarkers only (the features never read the
+   face). Google ships it CocoaPods-only, and its bundled XNNPACK/pthreadpool/
+   cpuinfo/KleidiAI collide with ONNX Runtime's under the toolchain's
+   `-all_load`; `tool/fetch_frameworks.sh` downloads the frameworks and renames
+   the 879 clashing symbols with an `mpx_` prefix (reproducible byte for byte;
+   the binaries are gitignored). **Mirroring trap, found and fixed:** the
+   Flutter camera plugin sets `isVideoMirrored` on the front camera, so stream
+   frames arrive selfie-mirrored; the plugin un-mirrors them natively before
+   detection so handedness and x-positions match the unflipped ASL Citizen
+   training video (known issue #6). Verified on the phone: right hand held up
+   landed in the right slot on 842/842 frames, 0 disagreements with BlazePose's
+   own wrist labels (the training cache disagrees on 1-3% of frames).
+2. **Normalizer/features port — done, in Dart.** `app/aslcv_core/` (pure Dart,
+   float32-exact via a Math.fround equivalent): skeleton, normalizer, feature
+   assembly, motion energy, live trim, tempo, CaptureBuffer, bundle grader, and
+   the MediaPipe-output -> combined-keypoint-layout mapping. `dart test`: 58
+   tests -- CaptureBuffer cases mirroring `tests/test_capture.py`, every
+   pipeline stage on 8 golden val clips end to end (`scripts/export_mobile.py`
+   fixtures), and the layout mapping against `MediaPipePoseExtractor
+   (mirrored=False)` on 5 real frames (`scripts/export_layout_fixture.py`).
+   Mutation-checked (velocity sign, tempo peak lag, left/right swap all fail).
+3. **Grader export — done, ONNX.** `scripts/export_mobile.py` writes
+   `models/mobile/` (`grader.onnx` + `references.f32` + `bundle.json` +
+   `skeleton.json`); `grading/bundle_grader.py` is the executable spec of
+   grading from those files alone (`tests/test_bundle_grader.py`). The BiGRU
+   exported cleanly (unpadded batch-1 wrapper, `grading/inference_net.py`).
+   On the phone, ONNX Runtime matches Python within 9.5e-7, 2-4 ms per attempt.
+4. **Reference clips — decided: bundle them.** One clip per curriculum sign
+   (the same `fetch_reference` pick the desktop shows), trimmed to its
+   motion-active span, H.264 480p: 60 clips, 5.6 MB total
+   (`scripts/export_reference_clips.py`). Small enough that streaming isn't
+   worth it; works offline.
+5. **Gloss engine placement — not started** (sentence mode isn't ported yet).
+6. **Learner state — not started** (mastery/scheduler not ported yet).
+
+*Measured on-device before trusting live grades:*
+- GPU vs CPU landmark delegate. On one still frame the CPU path matches Python
+  within 0.15 px; the GPU path drifts (pose up to 27 px, hands 5-7 px). What
+  matters is the grade: on 20 reference clips run through both delegates on the
+  phone, handshape/major/minor location/movement verdicts changed 0/20,
+  repeated 2/20, and each delegate's match rate against the target was
+  identical. Live grading stays on GPU (~24 fps vs ~5 fps CPU).
+- Frame rate. The phone delivers ~24 fps; training clips are 30 fps. On all
+  229 val clips, grading at 24 fps flips 2-6% of verdicts per parameter with no
+  change in accuracy, and resampling 24 -> 30 fps does not reduce the flips, so
+  no resampling was added.
+
+*The app:* `app/tutor/` -- pick a sign, its reference clip loops, capture
+(READY/CAPTURING/CAPTURED via the bundle's own CaptureBuffer settings) grades
+automatically on settle and shows all five parameter verdicts with you/target
+values, plus a diagnostics sheet (delegate, fps, hand-slot test, CPU/GPU
+landmark parity, the GPU-vs-CPU grade check). Assets are copied from `models/`
+by `app/tutor/tool/sync_assets.sh` (gitignored).
+
+*Remaining for "done":* mastery + spaced-repetition scheduler on the phone,
+coaching text, sentence mode (and where the gloss engine runs), attempt logging
+from the phone, Android.
+
+**Original scoping (written before any of the above was started):**
 
 Everything through Phase 7 is a desktop/dev-machine prototype: Python scripts, a
 local webcam, a local file cache. The product is meant to run on a phone. This
@@ -2194,10 +2290,16 @@ passed / 10 skipped.**
                        #   --gpu; [n] now records mastery + picks the next target
                        #   adaptively instead of cycling a fixed list),
                        #   benchmark_extractors.py (Phase 3: FPS/jitter/region-split
-                       #   hand-dropout across all 4 extractors, --gpu for mediapipe)
+                       #   hand-dropout across all 4 extractors, --gpu for mediapipe),
+                       #   export_mobile.py / export_reference_clips.py /
+                       #   export_layout_fixture.py (Phase 8 bundle, clips, fixtures),
+                       #   replay_attempts.py (re-run logged live attempts through
+                       #   CaptureBuffer with other settings)
     tools/             # DONE — build_manifest, resolve_keys, join_phonology, validate_curriculum
-    app/               # Phase 6 v1 loop lives in scripts/diagnose_demo.py for now,
-                       #   not packaged here yet -- see Phase 6 status
+    app/               # Phase 8 phone port (Flutter): aslcv_core/ (Dart port of the
+                       #   grading pipeline + parity tests), mediapipe_ios/ (native
+                       #   plugin), tutor/ (the app), flutter_spike/ (feasibility
+                       #   spike), core/ (superseded TypeScript port)
     tests/
       test_embedding_model.py   # Phase 4 — architecture tests on synthetic tensors,
                                  #   incl. test_heads_are_structurally_disjoint (backprop-

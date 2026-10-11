@@ -92,11 +92,20 @@ by the live demo) — confirming this project's distance-based, always-know-the-
 approach is the right fit for tutoring, while being honest about where an
 open-vocabulary CTC model genuinely wins instead. See `CTC_VS_ALIGNMENT_REPORT.md`.
 
+**Phase 8 (the phone app): in progress.** A Flutter app, built entirely on Linux,
+grades single signs live on an iPhone: MediaPipe runs natively, the feature pipeline
+is ported to Dart and parity-tested against Python, and the grader runs as an ONNX
+model. Before trusting it, the main risks of moving to a phone were measured on the
+device: hand handedness (the camera feed arrives mirrored and is un-mirrored before
+detection), the GPU vs CPU landmark path (no change to grades), and 24 vs 30 fps (no
+change in accuracy). Not yet on the phone: the adaptive scheduler, coaching,
+sentence mode, Android.
+
 **Open:** fluent Deaf review of the gloss rule engine's output (a human bottleneck,
-not a coding task — see `scripts/export_review_sheet.py`); sentence-mode capture
-timing has only been tuned against synthetic energy patterns, not a real camera yet;
-Phase 8 (porting to a phone) and Phase 9 (expanding past 60 signs) are both scoped in
-`project_workflow.md` but not started.
+not a coding task — see `scripts/export_review_sheet.py`); the rest of Phase 8; and
+Phase 9 (expanding past 60 signs), scoped in `project_workflow.md` but not started.
+Sentence-mode capture timing is tuned on real webcam recordings
+(`--log-attempts` + `scripts/replay_attempts.py`).
 
 ## Structure
 
@@ -127,6 +136,11 @@ Phase 8 (porting to a phone) and Phase 9 (expanding past 60 signs) are both scop
     │   ├── train_embedding_grader.py / eval_embedding_grader.py
     │   ├── train_ctc_cslr.py / eval_ctc_vs_alignment.py / eval_forced_alignment.py
     │   └── gloss_repl.py / export_review_sheet.py / compose_sentence.py / ...
+    ├── app/                     # Phase 8 phone port (Flutter)
+    │   ├── aslcv_core/              # Dart port of features + grading; `dart test` parity suite
+    │   ├── mediapipe_ios/           # native MediaPipe plugin (iOS)
+    │   ├── tutor/                   # the app
+    │   └── flutter_spike/           # the feasibility spike that picked Flutter
     ├── tests/                   # `make test` / `uv run pytest tests/` — one command, everything
     ├── project_workflow.md      # the detailed, phase-by-phase build plan + history
     └── pyproject.toml / uv.lock / .python-version
@@ -212,6 +226,20 @@ CAPTURED.
 
 Tests: `make test` (== `uv run pytest tests/`), or the faster direct invocation
 `.venv/bin/python -m pytest tests/` if `uv run`'s dependency resync feels slow.
+
+### The phone app (iOS, built on Linux)
+
+Needs the [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev) toolchain (xtool + an Xcode SDK
+extracted from Xcode.xip) and Flutter; a free Apple ID works (installs last 7 days).
+See [`app/tutor/README.md`](app/tutor/README.md) for the full steps. In short:
+
+```bash
+.venv/bin/python scripts/export_mobile.py            # grader -> models/mobile/ (ONNX bundle)
+.venv/bin/python scripts/export_reference_clips.py   # 60 trimmed reference clips
+app/mediapipe_ios/tool/fetch_frameworks.sh           # MediaPipe iOS frameworks (once)
+app/tutor/tool/sync_assets.sh                        # copy models into the app
+(cd app/aslcv_core && dart test)                     # Dart port parity tests
+```
 
 ## Non-negotiable constraints
 

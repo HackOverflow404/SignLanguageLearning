@@ -13,6 +13,10 @@ import torch
 from aslcv.research.ctc_cslr import (BLANK, CTCEncoder, edit_distance, forced_align, greedy_decode,
                                       segments_from_forced_align, word_error_rate)
 
+# CUDA when available: torch's CPU GRU kernel segfaults in this environment
+# (CLAUDE.md's Testing note), the same reason the embedding-model tests use it.
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def test_edit_distance_identical_sequences_is_zero():
     assert edit_distance([1, 2, 3], [1, 2, 3]) == 0
@@ -54,9 +58,9 @@ def test_greedy_decode_adjacent_same_label_needs_a_blank_between():
 
 
 def test_ctc_encoder_output_shape_and_is_log_probs():
-    model = CTCEncoder(in_dim=16, vocab_size=5, hidden=8, layers=1)
-    features = torch.randn(3, 10, 16)
-    lengths = torch.tensor([10, 7, 4])
+    model = CTCEncoder(in_dim=16, vocab_size=5, hidden=8, layers=1).to(_DEVICE)
+    features = torch.randn(3, 10, 16, device=_DEVICE)
+    lengths = torch.tensor([10, 7, 4], device=_DEVICE)
     out = model(features, lengths)
     assert out.shape == (3, 10, 6)  # vocab_size + 1 (blank)
     # log_softmax output: each real frame's row exponentiates to ~1
