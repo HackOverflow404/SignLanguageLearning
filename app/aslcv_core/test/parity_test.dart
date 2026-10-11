@@ -53,7 +53,7 @@ void main() {
   final skeleton = Skeleton.fromJson(jsonDecode(File('$bundle/skeleton.json').readAsStringSync()));
   final meta = BundleMeta.fromJson(jsonDecode(File('$bundle/bundle.json').readAsStringSync()));
   final references = Float32List.sublistView(File('$bundle/${meta.referencesFile}').readAsBytesSync());
-  final fixtures = (Directory('$bundle/fixtures').listSync().whereType<File>().where((f) => f.path.endsWith('.json')).toList()
+  final fixtures = (Directory('$bundle/fixtures').listSync().whereType<File>().where((f) => f.uri.pathSegments.last.startsWith('clip_') && f.path.endsWith('.json')).toList()
         ..sort((a, b) => a.path.compareTo(b.path)))
       .map((f) => jsonDecode(f.readAsStringSync()) as Map<String, dynamic>)
       .toList();

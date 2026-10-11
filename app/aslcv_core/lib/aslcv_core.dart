@@ -10,6 +10,7 @@ import 'src/tempo.dart';
 export 'src/capture.dart';
 export 'src/features.dart';
 export 'src/grader.dart';
+export 'src/mediapipe_layout.dart';
 export 'src/normalizer.dart';
 export 'src/skeleton.dart';
 export 'src/tempo.dart';

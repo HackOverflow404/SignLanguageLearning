@@ -39,6 +39,7 @@ class SignTargets {
 
 class BundleMeta {
   final int formatVersion;
+  final String model; // the ONNX graph's file name within the bundle
   final List<String> outputs;
   final int featureDim;
   final int embedDim;
@@ -57,6 +58,7 @@ class BundleMeta {
 
   BundleMeta.fromJson(Map<String, dynamic> j)
       : formatVersion = j['format_version'] as int,
+        model = j['model'] as String,
         outputs = (j['outputs'] as List).cast<String>(),
         featureDim = j['feature_dim'] as int,
         embedDim = j['embed_dim'] as int,

@@ -1,16 +1,24 @@
+import AVFoundation
+import Accelerate
 import CoreVideo
 import Flutter
 import MediaPipeTasksVision
 import UIKit
 
 /// Pose + hand landmarkers behind a method channel. `detectImage` runs IMAGE
-/// mode on an encoded image (parity checks); `detectFrame` runs VIDEO mode on
-/// raw BGRA camera frames (live use). Landmarks come back normalized to [0,1],
-/// as MediaPipe reports them.
+/// mode on an encoded image (parity checks, on CPU or GPU); `detectFrame` runs
+/// VIDEO mode on raw BGRA camera frames (live use), optionally reflecting a
+/// mirrored selfie frame back to the camera's true view first. Landmarks come
+/// back normalized to [0,1], as MediaPipe reports them, with MediaPipe's raw
+/// handedness labels. `detectVideo` runs fresh VIDEO-mode landmarkers over
+/// every frame of a bundled video asset, on CPU or GPU (delegate checks).
 public class MediapipeIosPlugin: NSObject, FlutterPlugin {
   private let registrar: FlutterPluginRegistrar
   private var imagePose: PoseLandmarker?
   private var imageHands: HandLandmarker?
+  private var gpuImagePose: PoseLandmarker?
+  private var gpuImageHands: HandLandmarker?
+  private var assets: (pose: String, hand: String)?
   private var videoPose: PoseLandmarker?
   private var videoHands: HandLandmarker?
   private let queue = DispatchQueue(label: "mediapipe_ios")
@@ -59,6 +67,7 @@ public class MediapipeIosPlugin: NSObject, FlutterPlugin {
         case "init":
           let pose = args["pose"] as! String
           let hand = args["hand"] as! String
+          self.assets = (pose, hand)
           self.imagePose = try self.makePose(pose, .image)
           self.imageHands = try self.makeHands(hand, .image)
           // Parity checks stay on CPU (what Python ran); the live path tries
@@ -77,14 +86,23 @@ public class MediapipeIosPlugin: NSObject, FlutterPlugin {
           let data = (args["bytes"] as! FlutterStandardTypedData).data
           guard let ui = UIImage(data: data) else { throw NSError(domain: "mediapipe_ios", code: 2) }
           let img = try MPImage(uiImage: ui)
-          out = Self.pack(try self.imagePose!.detect(image: img), try self.imageHands!.detect(image: img),
-                          Int(img.width), Int(img.height))
+          var pose = self.imagePose!, hands = self.imageHands!
+          if args["gpu"] as? Bool ?? false {
+            if self.gpuImagePose == nil, let a = self.assets {
+              self.gpuImagePose = try self.makePose(a.pose, .image, gpu: true)
+              self.gpuImageHands = try self.makeHands(a.hand, .image, gpu: true)
+            }
+            pose = self.gpuImagePose!
+            hands = self.gpuImageHands!
+          }
+          out = Self.pack(try pose.detect(image: img), try hands.detect(image: img), Int(img.width), Int(img.height))
         case "detectFrame":
           let data = (args["bytes"] as! FlutterStandardTypedData).data
           let w = args["width"] as! Int, h = args["height"] as! Int, rowBytes = args["rowBytes"] as! Int
           let ts = args["timestampMs"] as! Int
+          let unmirror = args["unmirror"] as? Bool ?? false
           let t0 = CFAbsoluteTimeGetCurrent()
-          let img = try MPImage(pixelBuffer: try Self.pixelBuffer(data, w, h, rowBytes))
+          let img = try MPImage(pixelBuffer: try Self.pixelBuffer(data, w, h, rowBytes, unmirror: unmirror))
           let t1 = CFAbsoluteTimeGetCurrent()
           // Pose and hands are independent graphs: run them concurrently.
           var poseRes: Result<PoseLandmarkerResult, Error>!
@@ -108,6 +126,8 @@ public class MediapipeIosPlugin: NSObject, FlutterPlugin {
           packed["handMs"] = handMs
           packed["totalMs"] = (CFAbsoluteTimeGetCurrent() - t0) * 1000
           out = packed
+        case "detectVideo":
+          out = try self.detectVideo(asset: args["asset"] as! String, gpu: args["gpu"] as? Bool ?? false)
         default:
           DispatchQueue.main.async { result(FlutterMethodNotImplemented) }
           return
@@ -121,7 +141,38 @@ public class MediapipeIosPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  private static func pixelBuffer(_ data: Data, _ w: Int, _ h: Int, _ rowBytes: Int) throws -> CVPixelBuffer {
+  /// Copy a BGRA frame into a fresh pixel buffer, reflecting it horizontally
+  /// when `unmirror` is set (a selfie-mirrored frame back to what the camera saw).
+  /// Every frame of a video asset through new VIDEO-mode landmarkers (so no
+  /// tracking state leaks in from the live camera), timestamped by the
+  /// video's own presentation times.
+  private func detectVideo(asset: String, gpu: Bool) throws -> [String: Any] {
+    guard let a = assets else { throw NSError(domain: "mediapipe_ios", code: 4) }
+    let pose = try makePose(a.pose, .video, gpu: gpu)
+    let hands = try makeHands(a.hand, .video, gpu: gpu)
+    let video = AVURLAsset(url: URL(fileURLWithPath: try assetPath(asset)))
+    guard let track = video.tracks(withMediaType: .video).first else { throw NSError(domain: "mediapipe_ios", code: 5) }
+    let reader = try AVAssetReader(asset: video)
+    let output = AVAssetReaderTrackOutput(
+      track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+    reader.add(output)
+    reader.startReading()
+    var frames: [[String: Any]] = []
+    var lastTs = -1
+    while let sample = output.copyNextSampleBuffer() {
+      guard let pb = CMSampleBufferGetImageBuffer(sample) else { continue }
+      let ts = max(lastTs + 1, Int(CMSampleBufferGetPresentationTimeStamp(sample).seconds * 1000))
+      lastTs = ts
+      let img = try MPImage(pixelBuffer: pb)
+      frames.append(Self.pack(try pose.detect(videoFrame: img, timestampInMilliseconds: ts),
+                              try hands.detect(videoFrame: img, timestampInMilliseconds: ts),
+                              CVPixelBufferGetWidth(pb), CVPixelBufferGetHeight(pb)))
+    }
+    if reader.status == .failed { throw reader.error ?? NSError(domain: "mediapipe_ios", code: 6) }
+    return ["frames": frames]
+  }
+
+  private static func pixelBuffer(_ data: Data, _ w: Int, _ h: Int, _ rowBytes: Int, unmirror: Bool) throws -> CVPixelBuffer {
     var pb: CVPixelBuffer?
     let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
     guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, attrs, &pb) == kCVReturnSuccess, let buf = pb else {
@@ -131,8 +182,15 @@ public class MediapipeIosPlugin: NSObject, FlutterPlugin {
     let dst = CVPixelBufferGetBaseAddress(buf)!
     let dstRow = CVPixelBufferGetBytesPerRow(buf)
     data.withUnsafeBytes { src in
-      for y in 0..<h {
-        memcpy(dst + y * dstRow, src.baseAddress! + y * rowBytes, min(rowBytes, dstRow))
+      if unmirror {
+        var s = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: src.baseAddress!), height: vImagePixelCount(h),
+                              width: vImagePixelCount(w), rowBytes: rowBytes)
+        var d = vImage_Buffer(data: dst, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: dstRow)
+        vImageHorizontalReflect_ARGB8888(&s, &d, vImage_Flags(kvImageNoFlags))
+      } else {
+        for y in 0..<h {
+          memcpy(dst + y * dstRow, src.baseAddress! + y * rowBytes, min(rowBytes, dstRow))
+        }
       }
     }
     CVPixelBufferUnlockBaseAddress(buf, [])

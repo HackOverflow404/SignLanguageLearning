@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   camera: ^0.12.1
   mediapipe_ios:
-    path: mediapipe_ios
+    path: ../mediapipe_ios
   flutter_onnxruntime: ^1.9.0
 
 dev_dependencies:
