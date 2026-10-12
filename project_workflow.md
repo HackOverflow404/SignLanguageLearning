@@ -1920,8 +1920,8 @@ Against the six scoped items:
    dynamic part, not the engine: an LLM writes each practice sentence live,
    and that needs a model the phone can't run. Hosted inference credits ran
    out (HF, 402) and HF's free Docker Spaces now need PRO, so both models run
-   in-process with llama.cpp on an Oracle Cloud Always Free ARM VM (4 cores,
-   24 GB), behind Caddy for HTTPS on an sslip.io name (`server/deploy/`).
+   in-process with llama.cpp on an Oracle Cloud Always Free ARM VM (2 cores,
+   12 GB: the whole free A1 allowance), behind Caddy for HTTPS on an sslip.io name (`server/deploy/`).
    Writer: Qwen2.5-3B-Instruct, decoding constrained by a GBNF grammar built
    from the engine's own lexicon (curriculum words + inflections + the
    function words the engine drops) that forces the target sign's word in.

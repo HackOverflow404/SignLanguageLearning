@@ -54,7 +54,7 @@ signs, share on target and judged sensible): 0.5B 22%, 1.5B 35%, 3B 62%.
 
 ## Hosting: Oracle Cloud Always Free
 
-A free ARM VM (4 cores, 24 GB) runs the server under Docker Compose behind Caddy,
+A free ARM VM (2 cores, 12 GB) runs the server under Docker Compose behind Caddy,
 which gets a Let's Encrypt certificate for the VM's IP as an
 [sslip.io](https://sslip.io) name (e.g. `129-146-1-2.sslip.io`), since iOS needs
 HTTPS. No domain is needed.
@@ -64,7 +64,10 @@ One-time console steps (cloud.oracle.com):
 1. **Sign up.** The home region is permanent; free ARM capacity varies by region.
 2. **Create an instance** (Compute → Instances → Create):
    - Image: Canonical Ubuntu 24.04.
-   - Shape: Ampere `VM.Standard.A1.Flex`, 4 OCPUs, 24 GB memory (all Always Free).
+   - Shape: Ampere `VM.Standard.A1.Flex`, **2 OCPUs, 12 GB memory**: the whole
+     Always Free A1 allowance (1,500 OCPU-hours and 9,000 GB-hours a month,
+     as of 2026-10). Anything larger is billed.
+   - Boot volume: the default (~50 GB) is inside the 200 GB free block storage.
    - Networking: a new VCN with a public subnet, "Assign a public IPv4 address".
    - SSH keys: upload a public key, e.g. `~/.ssh/id_ed25519_personal.pub`.
    - "Out of capacity" means no free ARM hosts right now: retry later or pick
@@ -83,6 +86,11 @@ server/deploy/deploy.sh ubuntu@<public-ip>           # every later update
 It builds the image on the VM (llama.cpp compiles for ARM, ~10 minutes the first
 time), starts it, and waits for `https://<ip-with-dashes>.sslip.io/health`.
 Logs: `ssh ubuntu@<ip> 'cd aslcv-server && docker compose logs -f app'`.
+
+Oracle may reclaim an Always Free instance that is idle for 7 days (95th-percentile
+CPU, network and memory all under 20%). Once every sign's pool is full this server
+mostly idles, so a reclaimed VM is possible; `deploy.sh --setup` on a new one
+rebuilds it.
 
 Rate limits: 30 `/sentence` calls per client per 10 minutes and 1000 per day
 (`PER_CLIENT_LIMIT`, `DAILY_LIMIT`).
