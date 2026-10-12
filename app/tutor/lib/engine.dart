@@ -27,9 +27,10 @@ class Engine {
   final Map<String, ReferenceClip> clips;
   final String delegate; // what the live landmarkers actually run on
   final LearnerText text;
+  final SentenceReferences sentenceRefs;
   late final Map<String, List<(String, String)>> minimalPairs = findMinimalPairs(meta.signs, signs);
 
-  Engine._(this.grader, this.skeleton, this.layout, this.clips, this.delegate, this.text);
+  Engine._(this.grader, this.skeleton, this.layout, this.clips, this.delegate, this.text, this.sentenceRefs);
 
   BundleMeta get meta => grader.meta;
 
@@ -67,9 +68,13 @@ class Engine {
         sign, ReferenceClip('assets/clips/${c['file']}', c['video_id'] as String, c['signer_id'] as String)));
 
     final text = LearnerText.fromJson(jsonDecode(await rootBundle.loadString('assets/bundle/text.json')));
+    final refIndex = jsonDecode(await rootBundle.loadString('assets/bundle/sentence_refs.json')) as Map<String, dynamic>;
+    final refBlob = await rootBundle.load('assets/bundle/${refIndex['file']}');
+    final sentenceRefs = SentenceReferences(refIndex, Float32List.sublistView(Uint8List.fromList(
+        refBlob.buffer.asUint8List(refBlob.offsetInBytes, refBlob.lengthInBytes))));
     final delegate = await MediapipeIos.init(
         poseAsset: 'assets/mediapipe/pose_landmarker_full.task', handAsset: 'assets/mediapipe/hand_landmarker.task');
-    return Engine._(BundleGrader(meta, references, run), skeleton, MediaPipeLayout(skeleton), clips, delegate, text);
+    return Engine._(BundleGrader(meta, references, run), skeleton, MediaPipeLayout(skeleton), clips, delegate, text, sentenceRefs);
   }
 
   /// The plugin's detection result -> one raw pose in the bundle's layout.

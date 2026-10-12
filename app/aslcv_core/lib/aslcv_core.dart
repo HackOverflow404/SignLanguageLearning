@@ -7,6 +7,7 @@ import 'src/grader.dart';
 import 'src/skeleton.dart';
 import 'src/tempo.dart';
 
+export 'src/alignment.dart';
 export 'src/capture.dart';
 export 'src/coaching.dart';
 export 'src/features.dart';

@@ -128,11 +128,17 @@ class BundleGrader {
   Future<Map<String, Float32List>> run(Float32List raw, int frames, (double, double) tempo) {
     final dim = meta.featureDim;
     if (raw.length != frames * dim) throw ArgumentError('expected ${frames}x$dim features');
+    return _runModel(standardize(raw), frames, Float32List.fromList([tempo.$1, tempo.$2]));
+  }
+
+  /// Raw row-major features -> z-standardized with the training statistics.
+  Float32List standardize(Float32List raw) {
+    final dim = meta.featureDim;
     final x = Float32List(raw.length);
     for (var i = 0; i < raw.length; i++) {
       x[i] = f(f(raw[i] - meta.mean[i % dim]) / meta.std[i % dim]);
     }
-    return _runModel(x, frames, Float32List.fromList([tempo.$1, tempo.$2]));
+    return x;
   }
 
   Future<Grade> grade(Float32List raw, int frames, (double, double) tempo, String targetSign) async {

@@ -1898,7 +1898,7 @@ Against the six scoped items:
    assembly, motion energy, live trim, tempo, CaptureBuffer, bundle grader, and
    the MediaPipe-output -> combined-keypoint-layout mapping, plus the learner
    model, scheduler and coaching text (item 6). `dart test`: 70
-   tests -- CaptureBuffer cases mirroring `tests/test_capture.py`, every
+   tests (79 with sentence alignment) -- CaptureBuffer cases mirroring `tests/test_capture.py`, every
    pipeline stage on 8 golden val clips end to end (`scripts/export_mobile.py`
    fixtures), and the layout mapping against `MediaPipePoseExtractor
    (mirrored=False)` on 5 real frames (`scripts/export_layout_fixture.py`).
@@ -1914,7 +1914,39 @@ Against the six scoped items:
    motion-active span, H.264 480p: 60 clips, 5.6 MB total
    (`scripts/export_reference_clips.py`). Small enough that streaming isn't
    worth it; works offline.
-5. **Gloss engine placement — not started** (sentence mode isn't ported yet).
+5. **Gloss engine placement — done: a server, with the LLM writer beside it.**
+   The engine stays in Python (spaCy) on a small server (`server/`, FastAPI)
+   instead of being ported to the phone; the reason it isn't on-device is the
+   dynamic part, not the engine: an LLM writes each practice sentence live,
+   and that needs a model the phone can't run. Hosted inference credits ran
+   out (HF, 402) and HF's free Docker Spaces now need PRO, so both models run
+   in-process with llama.cpp on an Oracle Cloud Always Free ARM VM (4 cores,
+   24 GB), behind Caddy for HTTPS on an sslip.io name (`server/deploy/`).
+   Writer: Qwen2.5-3B-Instruct, decoding constrained by a GBNF grammar built
+   from the engine's own lexicon (curriculum words + inflections + the
+   function words the engine drops) that forces the target sign's word in.
+   Gate: `sentence_prompt_maybe_llm` unchanged (now takes an injected
+   `generate`), so only engine-accepted sentences survive. Sense check: the
+   engine checks structure, not meaning, and the grammar-forced writer
+   produces fluent nonsense ("My father is a school."), so Qwen2.5-1.5B judges
+   each survivor by yes-over-no log-odds; on 121 hand-labelled outputs AUC
+   0.95 with the 2.5 cutoff picked on that set; re-checked on 304 new
+   hand-labelled outputs: AUC 0.96, 115 of 120 shown sensible (recall 0.76). A background pool keeps 3 finished sentences per sign. The phone
+   (`app/tutor/lib/sentence.dart`) gets a sentence for its scheduler-picked
+   target or glosses a typed one, refuses any gloss without a bundled clip,
+   plays the clips back to back, and grades one continuous capture by forced
+   alignment ported to Dart (`app/aslcv_core/lib/src/alignment.dart`: DTW,
+   segment ranges, per-segment live trim, parity-tested on 6 sentences against
+   `align_and_grade`, `scripts/export_sentence_references.py`). Mastery
+   updates per word. Writer choice, measured on a GPU (quality doesn't
+   depend on hardware; 3 sentences per sign, all 60 signs): on target and
+   judged sensible 22% for 0.5B, 35% for 1.5B, 54% for 3B, and 62% for 3B
+   after two grammar fixes found in the samples ("at" was missing, so "at
+   school" came out as "ate school"; 5 words after the target cut sentences
+   off at "to."). The pool filler also rotated badly: it retried the first
+   empty sign forever, so one sign that never passes starved every other
+   pool; it now takes the least recently tried among the emptiest. Latency
+   on the VM's ARM cores is still to be measured once it's deployed.
 6. **Learner state — done.** `app/aslcv_core/lib/src/learner.dart` ports
    `MasteryState` (EMA + SM2 spacing on the attempt clock, same JSON keys as
    `data/learner_state.json`) and `pick_next`/`find_minimal_pairs`;

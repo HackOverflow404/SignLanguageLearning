@@ -144,3 +144,19 @@ if __name__ == "__main__":
                 failures += 1
                 print(f"  FAIL {name}: {exc}")
     sys.exit(1 if failures else 0)
+
+
+def test_injected_generator_goes_through_the_same_gate():
+    # A local model plugged in via `generate`: no token needed, and its
+    # refused sentences are retried exactly like the hosted API's.
+    replies = ["I love pizza.", "I want water."]
+    prompts = []
+
+    def generate(prompt):
+        prompts.append(prompt)
+        return replies.pop(0)
+
+    with no_ambient_hf_token():
+        seq = sentence_prompt_maybe_llm("water", generate=generate, max_attempts=2)
+    assert seq is not None and seq.in_scope and "water" in seq.gloss_ids
+    assert len(prompts) == 2 and "'water'" in prompts[0]

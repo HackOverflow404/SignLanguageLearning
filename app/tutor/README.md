@@ -52,6 +52,20 @@ With a free Apple ID, the installed app expires after 7 days; reinstall to renew
 Close the app on the phone before installing. If the install fails with
 `deadlineExceeded`, Apple's provisioning server timed out; retry it.
 
+## Sentence mode
+
+The notes icon in the top bar switches to sentence mode: the app asks the sentence
+server (`server/` in the repo) for a sentence using the scheduler's target sign,
+or glosses one you type (pencil icon). The reference card plays each word's clip in
+order; sign the whole sentence, then each word is graded on its own after forced
+alignment, and mastery updates per word. Build with the server's address:
+
+```bash
+flutter/build.sh ~/Documents/Projects/SignLanguageLearning/app/tutor SENTENCE_SERVER=https://<ip-with-dashes>.sslip.io/
+```
+
+Without it the mode says no server is set up; single-sign mode works offline.
+
 ## Not yet here
 
-Sentence mode, attempt logging, Android.
+Attempt logging, Android.

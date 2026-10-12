@@ -27,6 +27,8 @@ never a crash or a hang.
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from ._hf_client import DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT, resolve_token
 from ..production.gloss_rules import GlossSequence, _curriculum_signs, gloss_sentence
 
@@ -66,16 +68,46 @@ def _prompt(lemma: str, vocabulary: list[str]) -> str:
     )
 
 
+def _hosted_generate(token, model, provider, timeout):
+    """prompt -> English via HuggingFace's hosted Inference API, or None when
+    no token / no `huggingface_hub` (warned once). Raises on request failure;
+    the caller treats that as "no sentence this round"."""
+    global _warned_no_token
+    token = resolve_token(token)
+    if not token:
+        if not _warned_no_token:
+            print("sentence_prompt_maybe_llm: no HF_TOKEN set -- skipping sentence prompts", flush=True)
+            _warned_no_token = True
+        return None
+    try:
+        from huggingface_hub import InferenceClient
+    except ImportError:
+        print("sentence_prompt_maybe_llm: `huggingface_hub` not installed -- skipping", flush=True)
+        return None
+
+    def generate(prompt: str) -> str:
+        client = InferenceClient(model=model, provider=provider, token=token, timeout=timeout)
+        response = client.chat_completion(messages=[{"role": "user", "content": prompt}], max_tokens=40)
+        return response.choices[0].message.content
+
+    return generate
+
+
 def sentence_prompt_maybe_llm(target_gloss: str, enabled: bool = True, token: "str | None" = None,
                                model: str = DEFAULT_MODEL, provider: str = DEFAULT_PROVIDER,
                                timeout: float = DEFAULT_TIMEOUT, max_attempts: int = 2,
+                               generate: "Callable[[str], str] | None" = None,
                                ) -> "GlossSequence | None":
     """An in-scope GlossSequence built from an LLM-written English sentence
     containing `target_gloss`'s English word, or None if disabled, unavailable,
     or every attempt was refused by the gloss rule engine. NEVER returns a
     sequence the fail-closed rule engine itself didn't accept -- callers may
-    display the result directly."""
-    global _warned_no_token
+    display the result directly.
+
+    `generate` (prompt -> English) swaps in a different LLM -- e.g. the
+    sentence server's local model; by default the hosted HF API is called
+    with `token`/`model`/`provider`/`timeout`. Whichever model writes the
+    English, the rule-engine gate below is the same."""
     if not enabled:
         return None
 
@@ -83,28 +115,15 @@ def sentence_prompt_maybe_llm(target_gloss: str, enabled: bool = True, token: "s
     if lemma is None:
         return None
 
-    token = resolve_token(token)
-    if not token:
-        if not _warned_no_token:
-            print("sentence_prompt_maybe_llm: no HF_TOKEN set -- skipping sentence prompts", flush=True)
-            _warned_no_token = True
-        return None
-
-    try:
-        from huggingface_hub import InferenceClient
-    except ImportError:
-        print("sentence_prompt_maybe_llm: `huggingface_hub` not installed -- skipping", flush=True)
-        return None
+    if generate is None:
+        generate = _hosted_generate(token, model, provider, timeout)
+        if generate is None:
+            return None
 
     vocabulary = _vocabulary()
     for _ in range(max_attempts):
         try:
-            client = InferenceClient(model=model, provider=provider, token=token, timeout=timeout)
-            response = client.chat_completion(
-                messages=[{"role": "user", "content": _prompt(lemma, vocabulary)}],
-                max_tokens=40,
-            )
-            english = response.choices[0].message.content.strip().strip('"')
+            english = (generate(_prompt(lemma, vocabulary)) or "").strip().strip('"')
         except Exception as exc:  # noqa: BLE001 -- any SDK/network failure must fall back, not crash the demo
             print(f"sentence_prompt_maybe_llm: request failed ({exc!r}) -- skipping", flush=True)
             return None

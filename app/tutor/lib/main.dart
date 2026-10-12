@@ -3,6 +3,11 @@
 // target, never "which sign was that". Each graded attempt updates the
 // learner's saved mastery, and "Next sign" asks the scheduler what to drill.
 //
+// Sentence mode: the sentence engine server writes an English sentence for
+// the scheduler's pick and its rule engine glosses it; the app plays the
+// glosses' bundled clips in order, captures one continuous attempt, and
+// force-aligns it against the known gloss sequence to grade each word.
+//
 // Camera frames: the front camera's stream is selfie-mirrored (the camera
 // plugin sets isVideoMirrored on it). Grading must see the camera's TRUE view,
 // like the unflipped ASL Citizen training video (CLAUDE.md issue #6), so every
@@ -20,6 +25,7 @@ import 'package:video_player/video_player.dart';
 import 'delegate_check.dart';
 import 'engine.dart';
 import 'progress.dart';
+import 'sentence.dart';
 
 const _maxCaptureFrames = 150; // diagnose_demo.py's single-sign cap
 
@@ -80,13 +86,28 @@ class _TutorPageState extends State<TutorPage> {
   late String _target = pickNext(mastery, engine.signs, minimalPairs: engine.minimalPairs);
   String? _lastFocus; // the last graded attempt's focus mistake on _target, for a contrastive drill
   String? _drillNote; // why the scheduler picked _target, when it is a contrast drill
-  late final CaptureBuffer<Pose> _capture = CaptureBuffer<Pose>(
-    (frames) => handMotionEnergy(frames, engine.skeleton),
-    engine.meta.motionThreshold,
-    settleFrames: engine.meta.liveSettleFrames,
-    preroll: engine.meta.livePreroll,
-    maxFrames: _maxCaptureFrames,
-  );
+  late CaptureBuffer<Pose> _capture = _newCapture();
+
+  // Sentence mode.
+  bool _sentenceMode = false;
+  final SentenceClient _sentences = SentenceClient();
+  SentencePrompt? _sentence;
+  String? _sentenceError;
+  bool _fetching = false;
+  SentenceGrade? _sentenceGrade;
+  List<String> _sentenceCoach = [];
+
+  /// Single-sign capture uses the bundle's training-time margins; a sentence
+  /// rides through pauses between words for a settle window held in seconds.
+  CaptureBuffer<Pose> _newCapture() => CaptureBuffer<Pose>(
+        (frames) => handMotionEnergy(frames, engine.skeleton),
+        engine.meta.motionThreshold,
+        settleFrames: _sentenceMode
+            ? (sentenceSettleSeconds * (_fps > 5 ? _fps : 24)).round()
+            : engine.meta.liveSettleFrames,
+        preroll: engine.meta.livePreroll,
+        maxFrames: _sentenceMode ? sentenceCaptureMax : _maxCaptureFrames,
+      );
   final List<int> _captureTimes = []; // ms timestamps, parallel to _capture.frames
 
   CameraController? _camera;
@@ -176,7 +197,9 @@ class _TutorPageState extends State<TutorPage> {
       _leftHand = pose.scores[sk.anchor('left_hand_wrist')] > 0;
       _rightHand = pose.scores[sk.anchor('right_hand_wrist')] > 0;
       _handStats.add(pose, sk);
-      if (!wasSettled && _capture.state == CaptureState.settled) _gradeCapture();
+      if (!wasSettled && _capture.state == CaptureState.settled) {
+        _sentenceMode ? _gradeSentence() : _gradeCapture();
+      }
       if (mounted) setState(() {});
     }).catchError((Object e) {
       if (mounted) setState(() => _cameraError = 'landmarks: $e');
@@ -216,7 +239,102 @@ class _TutorPageState extends State<TutorPage> {
         _grade = null;
         _gradeError = null;
         _coach = null;
+        _sentenceGrade = null;
+        _sentenceCoach = [];
       });
+
+  Future<void> _gradeSentence() async {
+    final prompt = _sentence;
+    if (prompt == null) return _tryAgain(); // nothing to grade against yet
+    final frames = List<Pose>.of(_capture.frames);
+    final times = List<int>.of(_captureTimes);
+    setState(() {
+      _grading = true;
+      _gradeError = null;
+    });
+    try {
+      final result = await alignAndGrade(engine.grader, engine.skeleton, engine.sentenceRefs, frames, prompt.signs);
+      if (!mounted) return;
+      final coach = <String>[];
+      for (var i = 0; i < result.words.length; i++) {
+        final verdicts = result.words[i].grade.parameters.values;
+        mastery.update(result.words[i].targetSign, {for (final v in verdicts) v.parameter: v.correct});
+        if (verdicts.any((v) => v.correct == false)) {
+          coach.add('${prompt.glosses[i].text}: ${coachText(verdicts, engine.text.handshapes)}');
+        }
+      }
+      unawaited(widget.progress.save());
+      setState(() {
+        _sentenceGrade = result;
+        _sentenceCoach = coach;
+        _gradeFrames = frames.length;
+        _gradeFps = times.length > 1 ? 1000 * (times.length - 1) / (times.last - times.first) : 0;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _gradeError = '$e');
+    } finally {
+      if (mounted) setState(() => _grading = false);
+    }
+  }
+
+  Future<void> _newSentence({String? typed}) async {
+    setState(() {
+      _fetching = true;
+      _sentenceError = null;
+      _sentence = null;
+    });
+    _tryAgain();
+    try {
+      final prompt = typed != null
+          ? await _sentences.gloss(typed)
+          : await _sentences.forTarget(pickNext(mastery, engine.signs, minimalPairs: engine.minimalPairs));
+      final missing = missingReference(prompt, engine);
+      if (missing != null) throw SentenceError(missing);
+      if (mounted) setState(() => _sentence = prompt);
+    } catch (e) {
+      if (mounted) setState(() => _sentenceError = '$e');
+    } finally {
+      if (mounted) setState(() => _fetching = false);
+    }
+    _tryAgain(); // anything captured while waiting was not an attempt at this sentence
+  }
+
+  void _setMode(bool sentence) {
+    if (sentence == _sentenceMode) return;
+    _sentenceMode = sentence;
+    _capture = _newCapture();
+    _tryAgain();
+    if (sentence) {
+      final old = _reference;
+      setState(() => _reference = null);
+      old?.dispose();
+      if (_sentence == null && !_fetching) _newSentence();
+    } else {
+      _loadReference();
+    }
+  }
+
+  Future<void> _typeSentence() async {
+    final controller = TextEditingController();
+    final english = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Type a sentence'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 200,
+          decoration: const InputDecoration(hintText: 'I want water.'),
+          onSubmitted: (v) => Navigator.pop(c, v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, controller.text), child: const Text('Use it')),
+        ],
+      ),
+    );
+    if (english != null && english.trim().isNotEmpty) _newSentence(typed: english.trim());
+  }
 
   void _setTarget(String sign, {String? drillNote}) {
     _drillNote = drillNote;
@@ -244,13 +362,22 @@ class _TutorPageState extends State<TutorPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: DropdownButton<String>(
-          value: _target,
-          underline: const SizedBox(),
-          items: [for (final s in engine.signs) DropdownMenuItem(value: s, child: Text(glossLabel(s)))],
-          onChanged: (s) => s == null ? null : _setTarget(s),
-        ),
+        title: _sentenceMode
+            ? const Text('Sentence')
+            : DropdownButton<String>(
+                value: _target,
+                underline: const SizedBox(),
+                items: [for (final s in engine.signs) DropdownMenuItem(value: s, child: Text(glossLabel(s)))],
+                onChanged: (s) => s == null ? null : _setTarget(s),
+              ),
         actions: [
+          if (_sentenceMode)
+            IconButton(tooltip: 'Type a sentence', icon: const Icon(Icons.edit), onPressed: _fetching ? null : _typeSentence),
+          IconButton(
+            tooltip: _sentenceMode ? 'Single signs' : 'Sentences',
+            icon: Icon(_sentenceMode ? Icons.front_hand_outlined : Icons.notes),
+            onPressed: () => _setMode(!_sentenceMode),
+          ),
           IconButton(icon: const Icon(Icons.info_outline), onPressed: () => _showDiagnostics(context)),
         ],
       ),
@@ -294,16 +421,22 @@ class _TutorPageState extends State<TutorPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AspectRatio(
-                  aspectRatio: ref != null && ref.value.isInitialized ? ref.value.aspectRatio : 4 / 3,
-                  child: ref != null && ref.value.isInitialized
-                      ? VideoPlayer(ref)
-                      : const Center(child: CircularProgressIndicator()),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Text('Copy this: ${glossLabel(_target)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                ),
+                if (_sentenceMode)
+                  _sentence != null
+                      ? SequencePlayer(key: ValueKey(_sentence), engine: engine, prompt: _sentence!)
+                      : const AspectRatio(aspectRatio: 4 / 3, child: Center(child: CircularProgressIndicator()))
+                else ...[
+                  AspectRatio(
+                    aspectRatio: ref != null && ref.value.isInitialized ? ref.value.aspectRatio : 4 / 3,
+                    child: ref != null && ref.value.isInitialized
+                        ? VideoPlayer(ref)
+                        : const Center(child: CircularProgressIndicator()),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text('Copy this: ${glossLabel(_target)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
               ],
             ),
           ),
@@ -342,6 +475,7 @@ class _TutorPageState extends State<TutorPage> {
   }
 
   Widget _bottomPanel(BuildContext context) {
+    if (_sentenceMode) return _sentencePanel(context);
     final theme = Theme.of(context);
     final grade = _grade;
     final children = <Widget>[];
@@ -411,6 +545,105 @@ class _TutorPageState extends State<TutorPage> {
       const SizedBox(width: 12),
       Expanded(
         child: FilledButton.icon(onPressed: _nextSign, icon: const Icon(Icons.skip_next), label: const Text('Next sign')),
+      ),
+    ]));
+    return Material(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: children),
+      ),
+    );
+  }
+
+  Widget _sentencePanel(BuildContext context) {
+    final theme = Theme.of(context);
+    final prompt = _sentence;
+    final result = _sentenceGrade;
+    final children = <Widget>[];
+    if (_fetching) {
+      children.add(const Row(children: [
+        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+        SizedBox(width: 12),
+        Expanded(child: Text('Getting a sentence... (can take up to half a minute if the server has to write a new one)')),
+      ]));
+    } else if (_sentenceError != null) {
+      children.add(Text(_sentenceError!, style: TextStyle(color: theme.colorScheme.error)));
+    } else if (prompt != null) {
+      children.add(Text(prompt.english, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)));
+      children.add(Text('In ASL: ${[for (final g in prompt.glosses) g.text].join(' ')}', style: theme.textTheme.titleMedium));
+      for (final m in prompt.markers) {
+        children.add(Text(prompt.markerLine(m), style: theme.textTheme.bodySmall));
+      }
+      children.add(const SizedBox(height: 6));
+      if (_gradeError != null) {
+        children.add(Text('Grading failed: $_gradeError', style: TextStyle(color: theme.colorScheme.error)));
+      } else if (_grading) {
+        children.add(const Row(children: [
+          SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+          SizedBox(width: 12),
+          Text('Grading each word...'),
+        ]));
+      } else if (result == null) {
+        children.add(Text(
+          switch (_capture.state) {
+            CaptureState.idle => 'Watch the clips, then sign the whole sentence in one go. Start and finish '
+                'with your hands at rest; short pauses between words are fine.',
+            CaptureState.active => 'Capturing... rest your hands for a moment when you finish.',
+            CaptureState.settled => 'Captured.',
+          },
+          style: theme.textTheme.titleMedium,
+        ));
+      } else {
+        final judgedWords = [
+          for (final w in result.words)
+            (w, w.grade.parameters.values.where((v) => v.correct != null).toList()),
+        ];
+        final right = judgedWords.where((e) => e.$2.isNotEmpty && e.$2.every((v) => v.correct == true)).length;
+        children.add(Text('$right of ${result.words.length} words fully correct',
+            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)));
+        for (var i = 0; i < result.words.length; i++) {
+          final (w, judged) = judgedWords[i];
+          final ok = judged.where((v) => v.correct == true).length;
+          final all = judged.isNotEmpty && ok == judged.length;
+          children.add(Row(children: [
+            Icon(all ? Icons.check_circle : Icons.cancel, color: all ? Colors.green : Colors.red, size: 22),
+            const SizedBox(width: 8),
+            Text(prompt.glosses[i].text, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            Expanded(child: Text('$ok of ${judged.length} aspects match')),
+          ]));
+        }
+        for (final line in _sentenceCoach) {
+          children.add(Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(line, style: theme.textTheme.bodyMedium),
+          ));
+        }
+        children.add(const SizedBox(height: 4));
+        children.add(Text(
+          '$_gradeFrames frames at ${_gradeFps.toStringAsFixed(0)} fps. Clips are separate citation signs cut '
+          'together, not fluent signing. Model feedback, not a Deaf reviewer; the sentence is rule-engine output, '
+          'not yet reviewed by a fluent signer.',
+          style: theme.textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
+        ));
+      }
+    }
+    children.add(const SizedBox(height: 8));
+    children.add(Row(children: [
+      Expanded(
+        child: OutlinedButton.icon(
+          onPressed: prompt == null || (_capture.state == CaptureState.idle && result == null) ? null : _tryAgain,
+          icon: const Icon(Icons.replay),
+          label: const Text('Try again'),
+        ),
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        child: FilledButton.icon(
+          onPressed: _fetching ? null : () => _newSentence(),
+          icon: const Icon(Icons.skip_next),
+          label: const Text('New sentence'),
+        ),
       ),
     ]));
     return Material(

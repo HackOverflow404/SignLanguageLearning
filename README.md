@@ -99,8 +99,12 @@ model. Before trusting it, the main risks of moving to a phone were measured on 
 device: hand handedness (the camera feed arrives mirrored and is un-mirrored before
 detection), the GPU vs CPU landmark path (no change to grades), and 24 vs 30 fps (no
 change in accuracy). The adaptive loop runs on the phone too: saved per-sign mastery,
-the spaced-repetition scheduler with contrast drills, and coaching text. Not yet on
-the phone: sentence mode, Android.
+the spaced-repetition scheduler with contrast drills, and coaching text. Sentence
+mode is built too: a free server (`server/`, on an Oracle Cloud Always Free VM) has
+a small open LLM write a practice sentence around the learner's target sign, the
+fail-closed gloss engine decides whether it becomes ASL content, a second model
+drops sentences that don't make sense, and the phone grades the whole signed
+sentence by forced alignment. Not yet on the phone: attempt logging, Android.
 
 **Open:** fluent Deaf review of the gloss rule engine's output (a human bottleneck,
 not a coding task — see `scripts/export_review_sheet.py`); the rest of Phase 8; and

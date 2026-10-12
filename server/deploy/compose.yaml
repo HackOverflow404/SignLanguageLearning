@@ -1,0 +1,21 @@
+# The sentence server behind Caddy, which serves it over HTTPS with an
+# automatic Let's Encrypt certificate (iOS refuses plain HTTP). SITE_ADDRESS
+# comes from .env, written by deploy.sh: the VM's IP as an sslip.io name.
+services:
+  app:
+    build: ./app
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data: {}
+  caddy_config: {}
