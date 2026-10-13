@@ -8,6 +8,7 @@ import 'src/skeleton.dart';
 import 'src/tempo.dart';
 
 export 'src/alignment.dart';
+export 'src/attempt_log.dart';
 export 'src/capture.dart';
 export 'src/coaching.dart';
 export 'src/features.dart';

@@ -13,6 +13,10 @@
 // like the unflipped ASL Citizen training video (CLAUDE.md issue #6), so every
 // front-camera frame is un-mirrored natively BEFORE detection; the preview
 // stays mirrored, which is what a learner expects to see.
+//
+// Attempt logging (opt-in, Diagnostics sheet): every pose fed to the capture
+// buffer, including frames after it settles, is saved per attempt when the
+// attempt is reset, for replaying capture settings on the desktop.
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -22,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:mediapipe_ios/mediapipe_ios.dart';
 import 'package:video_player/video_player.dart';
 
+import 'attempts.dart';
 import 'delegate_check.dart';
 import 'engine.dart';
 import 'progress.dart';
@@ -49,11 +54,11 @@ class _LoadingPageState extends State<LoadingPage> {
   @override
   void initState() {
     super.initState();
-    Future.wait([Engine.load(), Progress.load()]).then((loaded) {
+    Future.wait([Engine.load(), Progress.load(), AttemptLog.load()]).then((loaded) {
       if (!mounted) return;
-      final (engine, progress) = (loaded[0] as Engine, loaded[1] as Progress);
-      Navigator.of(context)
-          .pushReplacement(MaterialPageRoute(builder: (_) => TutorPage(engine: engine, progress: progress)));
+      final (engine, progress, log) = (loaded[0] as Engine, loaded[1] as Progress, loaded[2] as AttemptLog);
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => TutorPage(engine: engine, progress: progress, attemptLog: log)));
     }).catchError((Object e) {
       if (mounted) setState(() => _error = '$e');
     });
@@ -72,8 +77,9 @@ class _LoadingPageState extends State<LoadingPage> {
 class TutorPage extends StatefulWidget {
   final Engine engine;
   final Progress progress;
+  final AttemptLog attemptLog;
 
-  const TutorPage({super.key, required this.engine, required this.progress});
+  const TutorPage({super.key, required this.engine, required this.progress, required this.attemptLog});
 
   @override
   State<TutorPage> createState() => _TutorPageState();
@@ -109,6 +115,12 @@ class _TutorPageState extends State<TutorPage> {
         maxFrames: _sentenceMode ? sentenceCaptureMax : _maxCaptureFrames,
       );
   final List<int> _captureTimes = []; // ms timestamps, parallel to _capture.frames
+  final AttemptRecorder _recorder = AttemptRecorder();
+  int _nCaptured = 0; // frames the buffer held when it settled
+  // The recorded attempt's context, taken at its first frame: target, mode and
+  // sentence change BEFORE the reset that saves the attempt.
+  Map<String, Object?>? _attemptMeta;
+  int _attemptId = 0; // bumped at every reset, so a late grade can't land on the next attempt
 
   CameraController? _camera;
   bool _unmirror = false;
@@ -186,6 +198,10 @@ class _TutorPageState extends State<TutorPage> {
       if (_processed % 15 == 0) _fps = _processed / (_clock.elapsedMilliseconds / 1000);
       final wasSettled = _capture.state == CaptureState.settled;
       _capture.append(pose);
+      if (widget.attemptLog.enabled) {
+        if (_recorder.length == 0) _attemptMeta = _attemptContext();
+        _recorder.record(pose, _capture.state, t / 1000);
+      }
       if (!wasSettled) {
         _captureTimes.add(t);
         // The buffer trims itself while idle; keep the timestamps aligned.
@@ -198,6 +214,7 @@ class _TutorPageState extends State<TutorPage> {
       _rightHand = pose.scores[sk.anchor('right_hand_wrist')] > 0;
       _handStats.add(pose, sk);
       if (!wasSettled && _capture.state == CaptureState.settled) {
+        _nCaptured = _capture.frames.length;
         _sentenceMode ? _gradeSentence() : _gradeCapture();
       }
       if (mounted) setState(() {});
@@ -207,6 +224,7 @@ class _TutorPageState extends State<TutorPage> {
   }
 
   Future<void> _gradeCapture() async {
+    final attempt = _attemptId;
     final frames = List<Pose>.of(_capture.frames);
     final times = List<int>.of(_captureTimes);
     setState(() {
@@ -219,6 +237,11 @@ class _TutorPageState extends State<TutorPage> {
       // Every graded attempt is evidence; null verdicts are skipped inside update().
       mastery.update(_target, {for (final v in grade.parameters.values) v.parameter: v.correct});
       unawaited(widget.progress.save());
+      if (attempt == _attemptId) {
+        _attemptMeta
+          ?..['event'] = 'graded'
+          ..['segments'] = [gradeJson(grade)];
+      }
       setState(() {
         _grade = grade;
         _coach = coachText(grade.parameters.values, engine.text.handshapes);
@@ -233,7 +256,46 @@ class _TutorPageState extends State<TutorPage> {
     }
   }
 
+  Map<String, Object?> _attemptContext() => {
+        'event': 'cleared', // "graded" once a grade lands
+        'mode': _sentenceMode ? 'sentence' : 'sign',
+        'target': _sentenceMode ? null : _target,
+        'sentence': _sentenceMode ? _sentence?.english : null,
+        'gloss_ids': _sentenceMode ? _sentence?.signs : [_target],
+        'extractor': 'mediapipe',
+        'delegate': engine.delegate,
+        'capture': {
+          'motion_threshold': engine.meta.motionThreshold,
+          'settle_frames': _capture.settleFrames,
+          'preroll': engine.meta.livePreroll,
+          'max_frames': _capture.maxFrames,
+        },
+        'segments': null,
+      };
+
+  /// Called at every reset: saves the attempt just ended, if it was logged,
+  /// ever moved, and (in sentence mode) had a sentence to attempt.
+  void _logAttempt() {
+    _attemptId++;
+    final meta = _attemptMeta;
+    if (widget.attemptLog.enabled && meta != null && _recorder.everActive &&
+        !(meta['mode'] == 'sentence' && meta['sentence'] == null)) {
+      final span = _recorder.capturedSpan(_nCaptured);
+      meta
+        ..addAll(_recorder.describe())
+        ..['n_captured'] = span == null ? 0 : _nCaptured
+        ..['captured_span'] = span == null ? null : [span.$1, span.$2];
+      unawaited(widget.attemptLog
+          .save(_recorder.rawFrames(), meta)
+          .catchError((Object e) => debugPrint('attempt log: $e')));
+    }
+    _recorder.reset();
+    _attemptMeta = null;
+    _nCaptured = 0;
+  }
+
   void _tryAgain() => setState(() {
+        _logAttempt();
         _capture.reset();
         _captureTimes.clear();
         _grade = null;
@@ -246,6 +308,7 @@ class _TutorPageState extends State<TutorPage> {
   Future<void> _gradeSentence() async {
     final prompt = _sentence;
     if (prompt == null) return _tryAgain(); // nothing to grade against yet
+    final attempt = _attemptId;
     final frames = List<Pose>.of(_capture.frames);
     final times = List<int>.of(_captureTimes);
     setState(() {
@@ -264,6 +327,11 @@ class _TutorPageState extends State<TutorPage> {
         }
       }
       unawaited(widget.progress.save());
+      if (attempt == _attemptId) {
+        _attemptMeta
+          ?..['event'] = 'graded'
+          ..['segments'] = [for (final w in result.words) gradeJson(w.grade, frameRange: w.frameRange)];
+      }
       setState(() {
         _sentenceGrade = result;
         _sentenceCoach = coach;
@@ -698,6 +766,7 @@ class _TutorPageState extends State<TutorPage> {
       isScrollControlled: true,
       builder: (_) => _Diagnostics(
         engine: engine,
+        attemptLog: widget.attemptLog,
         lines: () => [
           'Landmarks: ${engine.delegate}, ${_fps.toStringAsFixed(1)} fps processed',
           'Camera: ${size == null ? '-' : '${size.width.round()}x${size.height.round()}'}, '
@@ -765,11 +834,12 @@ class HandStats {
 
 class _Diagnostics extends StatefulWidget {
   final Engine engine;
+  final AttemptLog attemptLog;
   final List<String> Function() lines;
   final VoidCallback onReset;
   final Future<void> Function() onResetProgress;
 
-  const _Diagnostics({required this.engine, required this.lines, required this.onReset, required this.onResetProgress});
+  const _Diagnostics({required this.engine, required this.attemptLog, required this.lines, required this.onReset, required this.onResetProgress});
 
   @override
   State<_Diagnostics> createState() => _DiagnosticsState();
@@ -779,6 +849,12 @@ class _DiagnosticsState extends State<_Diagnostics> {
   String _cpu = 'running...', _gpu = 'running...';
   String? _delegateCheck;
   bool _checking = false;
+  int? _logged; // attempts saved on this phone
+
+  Future<void> _countLogged() async {
+    final n = await widget.attemptLog.count();
+    if (mounted) setState(() => _logged = n);
+  }
 
   Future<void> _runDelegateCheck() async {
     setState(() {
@@ -807,6 +883,7 @@ class _DiagnosticsState extends State<_Diagnostics> {
   void initState() {
     super.initState();
     _refresh;
+    _countLogged();
     landmarkParity(gpu: false)
         .then((s) => setState(() => _cpu = s))
         .catchError((Object e) => setState(() => _cpu = 'FAILED: $e'));
@@ -845,6 +922,25 @@ class _DiagnosticsState extends State<_Diagnostics> {
                   child: const Text('Reset progress'),
                 ),
               ]),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Log attempts for capture tuning'),
+                subtitle: Text('Keypoints only, never video; kept on this phone '
+                    '(Files app, ASL Tutor folder). ${_logged ?? '?'} saved.'),
+                value: widget.attemptLog.enabled,
+                onChanged: (on) async {
+                  await widget.attemptLog.setEnabled(on);
+                  if (mounted) setState(() {});
+                },
+              ),
+              if ((_logged ?? 0) > 0)
+                OutlinedButton(
+                  onPressed: () async {
+                    await widget.attemptLog.clear();
+                    await _countLogged();
+                  },
+                  child: const Text('Delete logged attempts'),
+                ),
               const SizedBox(height: 16),
               const Text('Grades on GPU vs CPU landmarks, over 20 reference clips (about 2 minutes; '
                   'keep this sheet open):'),

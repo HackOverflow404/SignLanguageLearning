@@ -104,7 +104,8 @@ mode is built too: a free server (`server/`, on an Oracle Cloud Always Free VM) 
 a small open LLM write a practice sentence around the learner's target sign, the
 fail-closed gloss engine decides whether it becomes ASL content, a second model
 drops sentences that don't make sense, and the phone grades the whole signed
-sentence by forced alignment. Not yet on the phone: attempt logging, Android.
+sentence by forced alignment. Attempts can be logged on the phone (keypoints only) and
+replayed on the desktop to tune capture. Not yet on the phone: Android.
 
 **Open:** fluent Deaf review of the gloss rule engine's output (a human bottleneck,
 not a coding task — see `scripts/export_review_sheet.py`); the rest of Phase 8; and

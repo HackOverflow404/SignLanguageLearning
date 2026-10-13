@@ -153,7 +153,9 @@ def main():
             line = (f"  settle={settle:<3} ({_sec(settle, fps)}) captures {r.span} "
                     f"len {r.span[1] - r.span[0]}{'  HIT CAP' if capped else ''}"
                     f"{'  PREMATURE: motion resumed after settle' if premature else ''}")
-            if args.regrade:
+            if args.regrade and att.meta.get("mode") == "sign":
+                line += "  | (single-sign attempt: --regrade is for sentences)"
+            elif args.regrade:
                 from aslcv.grading.alignment import align_and_grade
                 from aslcv.production import GlossRuleEngine
                 seq = GlossRuleEngine().gloss(att.meta["sentence"])

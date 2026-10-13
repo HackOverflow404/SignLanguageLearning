@@ -66,6 +66,17 @@ flutter/build.sh ~/Documents/Projects/SignLanguageLearning/app/tutor SENTENCE_SE
 
 Without it the mode says no server is set up; single-sign mode works offline.
 
+## Attempt logging
+
+Diagnostics (ⓘ) → "Log attempts for capture tuning" saves each attempt's
+keypoints (never video) to the app's Documents/attempts folder, visible in the
+Files app. To replay them on the desktop, plug in and unlock the phone:
+
+```bash
+.venv/bin/python scripts/import_phone_attempts.py --pull
+.venv/bin/python scripts/replay_attempts.py data/live_sessions/phone-*.npz
+```
+
 ## Not yet here
 
-Attempt logging, Android.
+Android.

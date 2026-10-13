@@ -1898,7 +1898,7 @@ Against the six scoped items:
    assembly, motion energy, live trim, tempo, CaptureBuffer, bundle grader, and
    the MediaPipe-output -> combined-keypoint-layout mapping, plus the learner
    model, scheduler and coaching text (item 6). `dart test`: 70
-   tests (79 with sentence alignment) -- CaptureBuffer cases mirroring `tests/test_capture.py`, every
+   tests (83 with sentence alignment and attempt logging) -- CaptureBuffer cases mirroring `tests/test_capture.py`, every
    pipeline stage on 8 golden val clips end to end (`scripts/export_mobile.py`
    fixtures), and the layout mapping against `MediaPipePoseExtractor
    (mirrored=False)` on 5 real frames (`scripts/export_layout_fixture.py`).
@@ -1985,9 +1985,24 @@ diagnostics sheet (delegate, fps, hand-slot test, CPU/GPU
 landmark parity, the GPU-vs-CPU grade check). Assets are copied from `models/`
 by `app/tutor/tool/sync_assets.sh` (gitignored).
 
-*Remaining for "done":* sentence mode (and where the gloss engine runs),
-attempt logging from the phone, Android. Optional: LLM-phrased coaching
-(`--llm-feedback`'s hosted-API call) on the phone.
+*Attempt logging from the phone — built.* Opt-in switch in the diagnostics
+sheet. `AttemptRecorder` (`app/aslcv_core/lib/src/attempt_log.dart`) keeps
+the same record as the desktop's: every pose fed to the CaptureBuffer since
+the last reset, including post-settle frames, plus states and timestamps.
+Each attempt is saved at its reset as `Documents/attempts/<stamp>.bin.gz` +
+`.json` (mode, target or sentence, capture parameters, captured span, and
+each graded segment). The attempt's context is taken at its first frame,
+because target/mode/sentence change before the reset that saves it.
+`scripts/import_phone_attempts.py --pull` copies the folder over USB
+(`afcclient`; the app shares its Documents folder, and xtool registers it
+as `XTL-<id>.dev.aslcv.aslcvTutor`) and converts it to the desktop format,
+so `scripts/replay_attempts.py` works unchanged. Checked end to end: a real
+clip pair played through the Dart CaptureBuffer and recorder, imported and
+replayed in Python, settled on the same frame (69) and span.
+
+*Remaining for "done":* deploying the sentence server (waiting on the
+Oracle VM), Android. Optional: LLM-phrased coaching (`--llm-feedback`'s
+hosted-API call) on the phone.
 
 **Original scoping (written before any of the above was started):**
 
