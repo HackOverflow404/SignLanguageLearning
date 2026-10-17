@@ -68,10 +68,17 @@ One-time console steps (cloud.oracle.com):
      Always Free A1 allowance (1,500 OCPU-hours and 9,000 GB-hours a month,
      as of 2026-10). Anything larger is billed.
    - Boot volume: the default (~50 GB) is inside the 200 GB free block storage.
-   - Networking: a new VCN with a public subnet, "Assign a public IPv4 address".
+   - Networking: the VCN `aslcv-vcn`, made first with Networking → Virtual
+     cloud networks → Start VCN Wizard → "Create VCN with Internet
+     Connectivity" (creating it inside the instance form leaves the public IP
+     switch disabled); its public subnet, "Assign a public IPv4 address" on.
    - SSH keys: upload a public key, e.g. `~/.ssh/id_ed25519_personal.pub`.
    - "Out of capacity" means no free ARM hosts right now: retry later or pick
-     another availability domain.
+     another availability domain. `server/deploy/launch_vm.sh` does the
+     retrying: with the oci CLI configured (`uv tool install oci-cli`, an API
+     key added under My profile → API keys, `~/.oci/config`) and the VCN
+     made first, it creates this exact instance as soon as any availability
+     domain has room, and refuses to run if an instance already exists.
 3. **Open ports 80 and 443**: the instance's subnet → its Security List → Add
    Ingress Rules: source `0.0.0.0/0`, TCP, destination port `80`; again for `443`.
 
