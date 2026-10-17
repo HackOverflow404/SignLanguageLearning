@@ -36,7 +36,8 @@ DEFAULT_BUNDLE = REPO / "models" / "mobile"
 def _targets(meta, sign):
     """parameter -> (target value as the verdict carries it, judged)."""
     out = {}
-    for p, t in meta["signs"][sign].items():
+    for p in ALL_PARAMETERS:
+        t = meta["signs"][sign][p]
         value = str(t["target"]) if p == "repeated_movement" else t["target"]
         out[p] = (value, t["judged"])
     return out
@@ -67,9 +68,11 @@ def _mastery_case(meta, rng, steps):
     signs = sorted(meta["signs"])[:8]
     state = MasteryState()
     updates = []
-    for _ in range(steps):
+    for i in range(steps):
         sign = rng.choice(signs)
         verdicts = {p: rng.choice([True, True, False, None]) for p in ALL_PARAMETERS}
+        if i % 15 == 7:
+            verdicts = dict.fromkeys(ALL_PARAMETERS)  # nothing judgeable (multimorphemic)
         updates.append(dict(sign=sign, verdicts=verdicts))
         state.update(sign, verdicts)
     due = {s: state.is_due(s) for s in signs}

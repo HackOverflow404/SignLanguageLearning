@@ -59,6 +59,11 @@ def describe_sign(phon_labels, id_gloss: str) -> str:
     handshape_clause = (f"{article} {handshape_label} handshape ({detail})" if detail
                          else f"{article} {handshape_label} handshape")
 
-    first = f"This sign uses {handshape_clause}, {_location_sentence(major, minor)}."
     second = _movement_sentence(movement, repeats)
+    if phon_labels.is_multimorphemic(id_gloss):
+        # ASL-LEX describes only the first morpheme; say so rather than
+        # present it as the whole sign.
+        return (f"This sign has more than one part, and only the first is described here. "
+                f"That part uses {handshape_clause}, {_location_sentence(major, minor)}. {second}")
+    first = f"This sign uses {handshape_clause}, {_location_sentence(major, minor)}."
     return f"{first} {second}"

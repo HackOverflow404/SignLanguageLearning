@@ -23,12 +23,12 @@ class FakeRandom implements SchedulerRandom {
   double nextDouble() => roll;
 }
 
-SignTargets targets(String hs, String loc, {bool repeats = false}) => SignTargets({
+SignTargets targets(String hs, String loc, {bool repeats = false, bool multimorphemic = false}) => SignTargets({
       'handshape': TargetLabel(hs, true),
       'major_location': TargetLabel('Head', true),
       'minor_location': TargetLabel(loc, true),
       'movement': TargetLabel('Straight', true),
-    }, TargetLabel(repeats, true));
+    }, TargetLabel(repeats, true), multimorphemic: multimorphemic);
 
 void main() {
   group('mastery', () {
@@ -51,6 +51,15 @@ void main() {
       expect(m.repetitions['a'], 0);
     });
 
+    test('an attempt with nothing judgeable is spaced like a pass, mastery untouched', () {
+      final m = MasteryState()
+        ..update('home', {'handshape': null, 'movement': null})
+        ..update('home', {'handshape': null, 'movement': null});
+      expect(m.interval['home'], secondRepInterval);
+      expect(m.signMastery('home'), initialMastery);
+      expect(m.isDue('home'), isFalse);
+    });
+
     test('json round trip', () {
       final m = MasteryState()
         ..update('a', {'handshape': true, 'movement': false})
@@ -67,6 +76,12 @@ void main() {
     test('minimal pairs differ in exactly one parameter', () {
       expect(pairs['minor_location'], [('mother', 'father')]);
       expect(pairs['handshape'], [('mother', 'water')]);
+    });
+
+    test('multimorphemic signs are left out of minimal pairs', () {
+      final withCompound = {...t, 'home': targets('5', 'Cheek', multimorphemic: true)};
+      final got = findMinimalPairs(withCompound, ['mother', 'father', 'water', 'home']);
+      expect(got.values.expand((p) => p).where((p) => p.$1 == 'home' || p.$2 == 'home'), isEmpty);
     });
 
     test('a wrong parameter with a partner fires a contrastive drill', () {

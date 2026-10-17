@@ -49,7 +49,7 @@ const paramTip = {
 };
 
 const _praise = 'Nice -- every parameter matched the reference.';
-const _noVerdict = 'Not enough was resolved to give a diagnosis -- try signing more clearly, closer to the camera.';
+const _noVerdict = 'This sign isn\'t scored part by part -- compare your signing with the reference video.';
 
 /// The wrong verdict the grader is most confident about (first wins a tie).
 Verdict? _focus(Iterable<Verdict> verdicts) {

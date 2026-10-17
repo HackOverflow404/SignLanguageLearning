@@ -21,6 +21,17 @@ than ``MIN_SUPPORT`` signs is reported as "insufficient data," not a confident
 right/wrong -- the same fail-closed instinct already applied in
 ``production/gloss_rules.py``, here at the level of one phonological verdict rather
 than a whole gloss.
+
+**Multimorphemic signs are not judged at all.** ASL-LEX codes phonology for a
+sign's FIRST morpheme only, so for the curriculum's compound/multimorphemic signs
+(``is_multimorphemic`` in phonology.csv: no, ok, sister, brother, learn, home)
+every parameter describes part of the sign. A verdict against that label can't
+see the rest of the sign, and can contradict it: NO is coded with no movement,
+and on its val clips the movement head said "wrong" for 3 of 3 correct
+attempts. ``judged()`` therefore returns False for every parameter of these
+signs, regardless of support, and they are left out of minimal pairs
+(``learner.scheduler.find_minimal_pairs``), whose one-parameter difference is
+only a difference between first morphemes.
 """
 from __future__ import annotations
 
@@ -102,6 +113,17 @@ class PhonologyLabels:
 
     def well_supported(self, parameter: str, value: str) -> bool:
         return self.support(parameter, value) >= MIN_SUPPORT
+
+    def is_multimorphemic(self, id_gloss: str) -> bool:
+        """True when ASL-LEX's phonology covers only this sign's first morpheme."""
+        return self.by_gloss[id_gloss].get("is_multimorphemic") == "1"
+
+    def judged(self, id_gloss: str, parameter: str) -> bool:
+        """Whether a verdict on `parameter` for target `id_gloss` may be shown as
+        right/wrong: the target's label value is well supported and describes
+        the whole sign (see the module docstring)."""
+        return (not self.is_multimorphemic(id_gloss)
+                and self.well_supported(parameter, self.label_for(id_gloss, parameter)))
 
     def repeated_bool(self, id_gloss: str) -> bool:
         return self.by_gloss[id_gloss]["repeated_movement"] == "1"

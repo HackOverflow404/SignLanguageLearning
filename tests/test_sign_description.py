@@ -73,6 +73,14 @@ def test_away_minor_location_is_phrased_as_near_not_touching():
     assert "Away" not in text  # raw code suffix must not leak into the sentence
 
 
+
+def test_multimorphemic_sign_says_only_its_first_part_is_described():
+    text = describe_sign(_phon_labels, "home")
+    assert text.startswith("This sign has more than one part")
+    assert "This sign uses" not in describe_sign(_phon_labels, "home")
+    assert describe_sign(_phon_labels, "water").startswith("This sign uses")
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in list(globals().items()):

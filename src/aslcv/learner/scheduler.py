@@ -20,8 +20,10 @@ def find_minimal_pairs(phon_labels: PhonologyLabels, signs) -> dict[str, list[tu
     the same definition eval_minimal_pairs.py uses for the accuracy screen,
     re-derived here rather than imported (that's a script, this is library
     code the live session imports; scripts import library code, not the
-    other way around)."""
-    signs = list(signs)
+    other way around). Multimorphemic signs are left out: their labels cover
+    only the first morpheme, so a one-parameter difference there says nothing
+    about the whole sign (phonology_labels.py)."""
+    signs = [s for s in signs if not phon_labels.is_multimorphemic(s)]
     pairs: dict[str, list[tuple[str, str]]] = {p: [] for p in ALL_PARAMETERS}
     for i, a in enumerate(signs):
         for b in signs[i + 1:]:

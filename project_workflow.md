@@ -830,11 +830,20 @@ The instructor's eye. Not a classifier.
   so a plateauing-then-drifting val curve can't silently ship whatever the last epoch
   happened to land on. `models/embedding_grader/history.json` has the full per-epoch
   curve (gitignored, like all of `models/`).
-- **Exclude the 6 multi-morphemic signs from parameter-level feedback** — not yet
-  wired as an explicit exclusion in `EmbeddingGrader`; the phonology labels used are
-  ASL-LEX's first-morpheme-only labels as joined in Phase 1 (`join_phonology.py`
-  already flags which 6 signs these are). Revisit if diagnosis quality on those 6
-  looks off in practice.
+- **Exclude the 6 multi-morphemic signs from parameter-level feedback** — done
+  (2026-10-17). `PhonologyLabels.judged(sign, parameter)` is False for every
+  parameter of no/ok/sister/brother/learn/home (`is_multimorphemic` from
+  `join_phonology.py`), on top of the MIN_SUPPORT gate; `EmbeddingGrader` and the
+  phone bundle's `judged` flags both come from it. Measured before the change, on
+  the 24 val clips of these signs graded against their own (correct) target: overall
+  per-parameter agreement was close to the other signs', but the misses fell where
+  the first-morpheme coding predicts — NO (coded no movement) was called wrong on
+  movement in 3/3 clips, LEARN in 3/4. These signs are also left out of minimal
+  pairs (11 pairs such as no/milk and ok/want_2 differed only between first
+  morphemes), their description says only the first part is described, an attempt
+  with nothing judgeable is spaced by SM2 like a pass (mastery untouched) so the
+  sign isn't due on every pick, and its coaching line points to the reference
+  video. Same rule in the Dart port, with regenerated parity fixtures.
 - **Produces:** given `(attempt, target_sign)` → `GradeResult(fidelity,
   parameters={param: ParameterVerdict(predicted, target, correct, support)})`.
 - **Done when:** a malformed attempt yields a specific diagnosis ("handshape right,

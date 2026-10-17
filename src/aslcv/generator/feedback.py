@@ -65,7 +65,7 @@ PARAM_TIP = {
 }
 
 _PRAISE = "Nice -- every parameter matched the reference."
-_NO_VERDICT = "Not enough was resolved to give a diagnosis -- try signing more clearly, closer to the camera."
+_NO_VERDICT = "This sign isn't scored part by part -- compare your signing with the reference video."
 
 
 def coach_text(parameters) -> str:

@@ -54,6 +54,19 @@ def test_singleton_class_is_not_well_supported():
     assert MIN_SUPPORT == 3
 
 
+def test_multimorphemic_signs_are_never_judged():
+    """ASL-LEX labels only the first morpheme of these, so no verdict on them may be
+    shown as right/wrong, even for a well-supported label value."""
+    phon = PhonologyLabels()
+    multi = {g for g in phon.by_gloss if phon.is_multimorphemic(g)}
+    assert multi == {"no", "ok", "sister", "brother", "learn", "home"}
+    assert phon.well_supported("handshape", phon.label_for("home", "handshape"))
+    for p in ("handshape", "major_location", "minor_location", "movement", "repeated_movement"):
+        assert not phon.judged("home", p)
+    assert phon.judged("mother", "minor_location")
+    assert not phon.judged("time", "major_location")  # thin, single-morpheme
+
+
 def test_repeated_movement_is_balanced_at_60_signs():
     """The whole reason Phase 4 trains on 60 signs, not the 20-sign slice: repeated
     is 30/30 there, vs 16/4 skewed in-slice (see project_workflow.md's Phase 4
@@ -141,6 +154,14 @@ def test_thin_class_verdict_is_gated_regardless_of_model_output(grader):
     result = grader.grade_against(npz, "time")
     assert result.parameters["major_location"].correct is None
     assert result.parameters["major_location"].support == 1
+
+
+@pytestmark_checkpoint
+def test_multimorphemic_target_has_no_judged_verdicts(grader):
+    row = _rows_for("home", "val")[0]
+    npz = REPO / "data" / "cache" / grader.extractor / f"{row['video_id']}.npz"
+    result = grader.grade_against(npz, "home")
+    assert all(v.correct is None for v in result.parameters.values())
 
 
 @pytestmark_checkpoint

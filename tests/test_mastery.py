@@ -111,12 +111,21 @@ def test_partial_pass_counts_as_a_miss_for_scheduling():
     assert m.repetitions["mother"] == 0
 
 
-def test_none_only_attempt_leaves_interval_untouched():
+def test_none_entries_do_not_count_toward_the_pass():
     m = MasteryState()
     m.update("mother", {"handshape": True})
-    interval_before = m.interval["mother"]
-    m.update("mother", {"movement": None})  # no judged parameter this time
-    assert m.interval["mother"] == interval_before
+    m.update("mother", {"handshape": True, "movement": None})
+    assert m.repetitions["mother"] == 2  # a pass on the judged parameter alone
+
+
+def test_ungradable_attempt_is_spaced_like_a_pass_without_touching_mastery():
+    # Every parameter None: a multimorphemic sign the grader can't diagnose.
+    m = MasteryState()
+    m.update("home", {"handshape": None, "movement": None})
+    m.update("home", {"handshape": None, "movement": None})
+    assert m.interval["home"] == SECOND_REP_INTERVAL
+    assert m.sign_mastery("home") == INITIAL_MASTERY
+    assert not m.is_due("home")
 
 
 def test_miss_resets_interval_and_lowers_ease():

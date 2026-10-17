@@ -34,7 +34,11 @@ class SignTargets {
   final Map<String, TargetLabel<String>> categorical;
   final TargetLabel<bool> repeatedMovement;
 
-  const SignTargets(this.categorical, this.repeatedMovement);
+  /// ASL-LEX labels cover only this sign's first morpheme: none of its
+  /// parameters are judged, and it is left out of minimal pairs.
+  final bool multimorphemic;
+
+  const SignTargets(this.categorical, this.repeatedMovement, {this.multimorphemic = false});
 }
 
 class BundleMeta {
@@ -84,6 +88,7 @@ class BundleMeta {
                 },
                 TargetLabel(labels['repeated_movement']['target'] as bool,
                     labels['repeated_movement']['judged'] as bool),
+                multimorphemic: labels['multimorphemic'] == true,
               ),
             ));
 }

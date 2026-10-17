@@ -105,7 +105,11 @@ class MasteryState {
       m[p] = old + learningRate * ((correct ? 1.0 : 0.0) - old);
       a[p] = (a[p] ?? 0) + 1;
     }
-    if (judged.isNotEmpty) _sm2Advance(sign, judged.every((c) => c));
+    if (judged.isNotEmpty) {
+      _sm2Advance(sign, judged.every((c) => c));
+    } else if (correctByParameter.isNotEmpty) {
+      _sm2Advance(sign, true); // nothing judgeable (multimorphemic): spaced like a pass
+    }
   }
 
   Map<String, dynamic> toJson() => {
@@ -165,9 +169,11 @@ class DefaultSchedulerRandom implements SchedulerRandom {
 /// repeated movement as a bool.
 Object _label(SignTargets t, String p) => p == 'repeated_movement' ? t.repeatedMovement.target : t.categorical[p]!.target;
 
-/// parameter -> every pair of `signs` differing in exactly that parameter.
-Map<String, List<(String, String)>> findMinimalPairs(Map<String, SignTargets> targets, List<String> signs) {
+/// parameter -> every pair of `signs` differing in exactly that parameter,
+/// leaving out multimorphemic signs (their labels cover the first morpheme only).
+Map<String, List<(String, String)>> findMinimalPairs(Map<String, SignTargets> targets, List<String> allSigns) {
   final pairs = {for (final p in allParameters) p: <(String, String)>[]};
+  final signs = [for (final s in allSigns) if (!targets[s]!.multimorphemic) s];
   for (var i = 0; i < signs.length; i++) {
     for (final b in signs.sublist(i + 1)) {
       final a = signs[i];

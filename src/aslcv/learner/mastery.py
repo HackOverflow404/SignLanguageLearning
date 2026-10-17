@@ -115,9 +115,11 @@ class MasteryState:
         Also advances the sign's SM2 interval: "good" means every JUDGED
         parameter matched (a real full pass, not an average) -- one wrong
         parameter is a miss for scheduling purposes, same standard `focus_parameter`
-        already applies when deciding whether to coach. A `None`-verdict-only
-        attempt (`judged` empty) carries no pass/fail evidence, so the interval
-        is left untouched rather than guessed."""
+        already applies when deciding whether to coach. An attempt whose
+        parameters are ALL `None` is a sign the grader can't diagnose at all (a
+        multimorphemic sign, phonology_labels.py): its mastery stays untouched,
+        but its interval advances as for a pass, since otherwise it would be
+        due on every pick and crowd out the signs that can be graded."""
         self.clock += 1
         self.last_seen[sign] = self.clock
         sign_mastery = self.mastery.setdefault(sign, {})
@@ -133,6 +135,8 @@ class MasteryState:
             sign_attempts[parameter] = sign_attempts.get(parameter, 0) + 1
         if judged:
             self._sm2_advance(sign, good=all(judged))
+        elif correct_by_parameter:
+            self._sm2_advance(sign, good=True)
 
     def to_dict(self) -> dict:
         return dict(mastery=self.mastery, attempts=self.attempts,

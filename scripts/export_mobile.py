@@ -59,10 +59,10 @@ def build_meta(grader, config, ref_signs):
         entry = {}
         for p in CATEGORICAL_PARAMETERS:
             target = pl.label_for(sign, p)
-            entry[p] = {"target": target, "judged": pl.support(p, target) >= MIN_SUPPORT}
-        rep = pl.repeated_bool(sign)
-        entry["repeated_movement"] = {
-            "target": rep, "judged": pl.support("repeated_movement", "1" if rep else "0") >= MIN_SUPPORT}
+            entry[p] = {"target": target, "judged": pl.judged(sign, p)}
+        entry["repeated_movement"] = {"target": pl.repeated_bool(sign), "judged": pl.judged(sign, "repeated_movement")}
+        # Left out of minimal pairs on the phone too (findMinimalPairs).
+        entry["multimorphemic"] = pl.is_multimorphemic(sign)
         signs[sign] = entry
     return {
         "format_version": FORMAT_VERSION,

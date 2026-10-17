@@ -31,6 +31,15 @@ def test_minimal_pairs_restricted_to_the_given_pool():
             assert a in ("mother", "water") and b in ("mother", "water")
 
 
+def test_multimorphemic_signs_are_left_out_of_minimal_pairs():
+    # no/milk differ only in first-morpheme handshape, which says nothing
+    # about the whole of NO.
+    pairs = find_minimal_pairs(PHON, list(PHON.by_gloss))
+    in_pairs = {s for ps in pairs.values() for pair in ps for s in pair}
+    assert not in_pairs & {"no", "ok", "sister", "brother", "learn", "home"}
+    assert "milk" not in {s for pair in find_minimal_pairs(PHON, ["no", "milk"])["handshape"] for s in pair}
+
+
 def test_contrastive_drill_fires_when_partner_available():
     m = MasteryState()
     pairs = find_minimal_pairs(PHON, ["mother", "father", "water"])

@@ -27,7 +27,7 @@ def test_all_correct_is_praise():
 
 def test_no_judged_parameters_is_the_no_verdict_message():
     parameters = {"handshape": verdict("handshape", None)}
-    assert "Not enough" in coach_text(parameters)
+    assert "reference video" in coach_text(parameters)
     assert focus_parameter(parameters) is None
 
 

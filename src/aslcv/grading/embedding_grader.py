@@ -23,7 +23,7 @@ from ..features import FeaturePipeline, Standardizer, hand_motion_energy
 from ..normalizer.shoulder import ShoulderNormalizer
 from .embedding_dataset import EmbeddingClipDataset, _live_trimmed_poses, _tempo_features, collate_fn
 from .embedding_model import PoseGraderNet
-from .phonology_labels import CATEGORICAL_PARAMETERS, MIN_SUPPORT, PhonologyLabels
+from .phonology_labels import CATEGORICAL_PARAMETERS, PhonologyLabels
 
 
 def skeleton_for(extractor: str):
@@ -73,6 +73,8 @@ class ParameterVerdict:
     head cannot be shown to have learned a generalizable notion of that label value
     (it may just recognize the one sign that happened to carry it), so reporting a
     confident correct/incorrect there would overstate what was actually verified.
+    It is also None for every parameter of a multimorphemic target, whose
+    ASL-LEX labels describe only its first morpheme (PhonologyLabels.judged).
     See phonology_labels.py's module docstring for the full reasoning.
     """
 
@@ -236,7 +238,7 @@ class EmbeddingGrader:
             confidence = float(probs[pred_idx])
             target_label = self.phon_labels.label_for(target_sign, p)
             support = self.phon_labels.support(p, target_label)
-            correct = (predicted == target_label) if support >= MIN_SUPPORT else None
+            correct = (predicted == target_label) if self.phon_labels.judged(target_sign, p) else None
             parameters[p] = ParameterVerdict(p, predicted, target_label, correct, support, confidence)
 
         repeated_prob = float(torch.sigmoid(out["repeated"]))
@@ -245,7 +247,8 @@ class EmbeddingGrader:
         target_repeated = self.phon_labels.repeated_bool(target_sign)
         target_repeated_raw = "1" if target_repeated else "0"
         rep_support = self.phon_labels.support("repeated_movement", target_repeated_raw)
-        rep_correct = (predicted_repeated == target_repeated) if rep_support >= MIN_SUPPORT else None
+        rep_correct = ((predicted_repeated == target_repeated)
+                       if self.phon_labels.judged(target_sign, "repeated_movement") else None)
         parameters["repeated_movement"] = ParameterVerdict(
             "repeated_movement", str(predicted_repeated), str(target_repeated),
             rep_correct, rep_support, rep_confidence)
