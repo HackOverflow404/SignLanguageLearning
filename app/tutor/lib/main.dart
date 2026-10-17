@@ -198,7 +198,9 @@ class _TutorPageState extends State<TutorPage> {
       if (_processed % 15 == 0) _fps = _processed / (_clock.elapsedMilliseconds / 1000);
       final wasSettled = _capture.state == CaptureState.settled;
       _capture.append(pose);
-      if (widget.attemptLog.enabled) {
+      // A recording starts only before the buffer settles: logging switched
+      // on while a result is showing waits for the next attempt.
+      if (widget.attemptLog.enabled && !(_recorder.length == 0 && wasSettled)) {
         if (_recorder.length == 0) _attemptMeta = _attemptContext();
         _recorder.record(pose, _capture.state, t / 1000);
       }
