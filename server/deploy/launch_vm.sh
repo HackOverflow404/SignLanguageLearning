@@ -20,17 +20,19 @@ export SUPPRESS_LABEL_WARNING=True
 tenancy=$(awk -F= '/^tenancy/ {gsub(/ /, "", $2); print $2; exit}' ~/.oci/config)
 log() { echo "$(date '+%F %T') $*"; }
 
+NETWORK_ERRORS="timed out|connection (error|refused|reset)|Max retries exceeded|Temporary failure in name resolution"
+
 # oci, retried while a newly added API key is still propagating (Oracle then
-# answers NotAuthenticated on some calls and not others).
+# answers NotAuthenticated on some calls and not others) or the network is down.
 o() {
   local out err
-  for _ in $(seq 20); do
+  for _ in $(seq 40); do
     err=$(mktemp)
     if out=$(oci "$@" 2>"$err"); then rm -f "$err"; echo "$out"; return 0; fi
-    if ! grep -q NotAuthenticated "$err"; then cat "$err" >&2; rm -f "$err"; return 1; fi
+    if ! grep -qiE "NotAuthenticated|$NETWORK_ERRORS" "$err"; then cat "$err" >&2; rm -f "$err"; return 1; fi
     rm -f "$err"; sleep 15
   done
-  echo "oci: still NotAuthenticated after 5 minutes" >&2; return 1
+  echo "oci: still failing after 10 minutes" >&2; return 1
 }
 
 # The first instance that isn't terminated or terminating, as "id state"
@@ -101,6 +103,8 @@ while true; do
       log "attempt $attempt: rate limited, backing off"; sleep $((RETRY_SECONDS * 3))
     elif grep -q "NotAuthenticated" "$err"; then
       log "attempt $attempt: API key not accepted yet, retrying"; sleep 15
+    elif grep -qiE "$NETWORK_ERRORS" "$err"; then
+      log "attempt $attempt: network error, retrying"; sleep "$RETRY_SECONDS"
     else
       log "attempt $attempt: unexpected error, stopping:"; cat "$err"; rm -f "$err"; exit 1
     fi
